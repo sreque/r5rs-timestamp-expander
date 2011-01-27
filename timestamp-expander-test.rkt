@@ -42,4 +42,4 @@
 (check-equal? (macro-expand 'a) 'a)
 (macro-expand '(or 1 2 3))
 (macro-expand '(let ([v #t]) (or #f v)))
-
+(macro-expand '(let ([a 1] [b 2] [c 3]) (quote a b c)))

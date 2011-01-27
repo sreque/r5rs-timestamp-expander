@@ -24,7 +24,7 @@
   
   (define (unstamp-syntax syntax)
     (match syntax
-      [(list elems ...) (map (lambda (elem) unstamp-syntax elem))]
+      [(list elems ...) (map (lambda (elem) (unstamp-syntax elem)) elems)]
       [(ts-syntax id _) id]
       [other other]))
   
@@ -116,8 +116,8 @@
          
   (define (quote-expr? pstate)
     (match pstate
-      [(parser-state (list 'quote rest ...) env)
-       (not (hash-has-key? 'quote))]
+      [(parser-state (list (ts-syntax 'quote time) rest ...) env)
+       (not (hash-has-key? env (ts-syntax 'quote time)))]
       [_ #f]))
   
   (define (and-macro syntax)
