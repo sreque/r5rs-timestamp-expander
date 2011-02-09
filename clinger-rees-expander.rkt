@@ -42,7 +42,7 @@
           (invoke-loop cur-value lists)))
     (invoke-loop init lists))
   
-  (struct input-matcher (pattern))
+  (struct input-matcher (source))
   (define-syntax make-input-struct
     (syntax-rules ()
       [(_ name syms ...) (struct name input-matcher (syms ...) #:transparent)]))
@@ -50,8 +50,8 @@
   ;how do I do an algebraic data type in Racket?
   ;This is the input matcher type's sub-types
   (begin
-    (make-input-struct pattern-identifier identifier)
-    (make-input-struct literal-identifier identifier)
+    (make-input-struct pattern-identifier)
+    (make-input-struct literal-identifier)
     (make-input-struct fixed-list sub-patterns)
     (struct improper-list fixed-list (tail-pattern) #:transparent)
     (struct ellipses-list fixed-list (tail-pattern) #:transparent)
@@ -76,14 +76,14 @@
     (if (not (list? syntax-list))
         (pattern-mismatch parent-pattern syntax-list "syntax not a list")
         (if (not (eqv? (length pattern-list) (length syntax-list)))
-            (pattern-mismatch (input-matcher-pattern parent-pattern) syntax-list 
-                              "arity mismatch")
+            (pattern-mismatch (input-matcher-source parent-pattern) syntax-list 
+                              (format "arity mismatch\n  pattern:~a\n  syntax:~a" pattern-list syntax-list))
             (inner-loop init-value pattern-list syntax-list))))
         
   (define (match-input matcher syntax def-env use-env)
     (match matcher
-      [(pattern-identifier _ id) (hash id syntax)]
-      [(literal-identifier _ id)
+      [(pattern-identifier id) (hash id syntax)]
+      [(literal-identifier id)
        ;should we verify that the input syntax is an identifier here?
        (if (eqv? (env-lookup def-env id) (env-lookup use-env syntax))
            (hash)
@@ -92,7 +92,7 @@
        ;TODO check length here and return pattern-mismatch on bad lengths
        (define fixed-length (length sub-patterns))
        (define-values (fixed-syntax variable-syntax) (split-at syntax fixed-length))
-       (define fixed-result (multi-match matcher fixed-syntax syntax def-env use-env))
+       (define fixed-result (multi-match matcher sub-patterns fixed-syntax (hash) def-env use-env))
        (if (pattern-mismatch? fixed-result)
            fixed-result
            (let ([variable-result (ellipses-match ellipses-pattern variable-syntax def-env use-env)])
@@ -101,10 +101,19 @@
                  (merge-envs fixed-result variable-result))))]
       [(improper-list _ sub-patterns end-pattern)
        ;TODO check length here and return pattern-mismatch on bad lengths
-       (define-values (fixed-syntax end-syntax) (split-at syntax (length fixed-syntax)))
-       (multi-match matcher (cons end-pattern sub-patterns) (cons end-syntax fixed-syntax) def-env use-env)]
+       (define sub-pattern-length (length sub-patterns))
+       (if (or (not (list? syntax)) (< (length syntax) sub-pattern-length))
+           (pattern-mismatch matcher syntax "syntax is not a list or is too short")
+           (begin
+             (let-values ([(fixed-syntax end-syntax) (split-at syntax sub-pattern-length)])
+               (multi-match 
+                matcher
+                (cons end-pattern sub-patterns)
+                (cons end-syntax fixed-syntax)
+                (hash)
+                def-env use-env))))]
       [(fixed-list _ sub-patterns) 
-       (multi-match matcher sub-patterns syntax def-env use-env)]
+       (multi-match matcher sub-patterns syntax (hash) def-env use-env)]
       [(datum datum)
        (if (eqv? datum syntax)
            (hash)
@@ -116,7 +125,7 @@
     (define (merge cur-env new-env)
       (for/fold ((env cur-env))
         (((k v) new-env))
-        (define cur-val (hash-ref env '()))
+        (define cur-val (hash-ref env k '()))
         (hash-set env k (cons v cur-val))))
     (define (process-result result)
       (if (pattern-mismatch? result)
