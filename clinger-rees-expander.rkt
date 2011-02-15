@@ -14,8 +14,7 @@
   (struct output-generator (generator def-env id-set ellipses-env) 
           #:transparent)
   
-  
-  
+  ;Should we create a separate data type for environments to restrict operations on them?
   (define (env-lookup env id)
     (hash-ref env id id))
   
@@ -24,7 +23,16 @@
       (((k v) env2))
       (hash-set result k v)))
 
+  (define (merge-match-results seq)
+    (let/ec break
+      (for/fold ((cur-env (hash)))
+         ((result seq))
+         (if (pattern-mismatch? result)
+             (break result)
+             (merge-envs cur-env result)))))
+  
   ;foldl that requires the input lists to all be the same size
+  ;this is not currently used
   (define (foldl-exact proc init . lists)
     (define (invoke-loop cur-value arg-lists)
       (loop (apply proc 
@@ -62,6 +70,49 @@
   (struct pattern-mismatch (pattern syntax msg)
           #:transparent)
 
+  ;attempts to split a list. On failure, returns a pattern mismatch object
+  ;On success, binds two passed-in identifiers to the split values and 
+  ;invokes the passed in expressions, which should return either an environment
+  ;or a pattern mismatch
+  ;arguments: 
+  ;  pattern: the syntax location where the split is occuring. Perhaps rename to source?
+  ;  syntax: the actual syntax to split.
+  ;  point: the index at which to split the syntax list
+  ;  x: the first identifier to bind the split results to
+  ;  y: the second identifier to bind the split results to
+  ;  body+: the expressions to execute on a successful split
+  (define-syntax split-or-fail
+    (syntax-rules ()
+      [(_ (_pattern _syntax _point) (x y) body1 body-rest ...)
+       (let-values ([(pattern syntax point) (values _pattern _syntax _point)])
+         (if (not (list? syntax))
+             (pattern-mismatch pattern syntax "syntax not a list")
+             (if (< (length syntax) point)
+                 (pattern-mismatch pattern syntax "Syntax list length too short")
+                 (let-values ([(x y) (split-at syntax point)])
+                   body1 body-rest ...))))]))
+  
+  ;This would be nested inside of match-merge-static if I took the time to figure out how
+  (define-syntax match-merge-static-helper  
+    (syntax-rules ()
+      [(_ result) result]
+      [(_ lresult lexpr1 lexpr-rest ...) 
+       (let ([lresult1 lexpr1])
+         (if (pattern-mismatch? lresult1) lresult1
+             (let ([merged (merge-envs lresult lresult1)])
+               (match-merge-static-helper merged lexpr-rest ...))))]))
+  
+  ;Lazily evaluates expressions and merges them, failing early on a pattern mismatch         
+  (define-syntax match-merge-static
+    (syntax-rules ()
+      [(_ expr1) expr1]
+      [(_ expr1 expr-rest ...)
+       (let ([result1 expr1])
+           (if 
+            (pattern-mismatch? result1) 
+            result1 
+            (match-merge-static-helper result1 expr-rest ...)))]))
+    
   (define (multi-match parent-pattern pattern-list syntax-list init-value def-env use-env)
     (define (inner-loop cur-value matcher-list syntax-list)
       (if (pattern-mismatch? cur-value)
@@ -89,29 +140,24 @@
            (hash)
            (pattern-mismatch matcher syntax "Syntax does not match literal identifier or the denotations are different"))]
       [(ellipses-list _ sub-patterns ellipses-pattern)
-       ;TODO check length here and return pattern-mismatch on bad lengths
-       (define fixed-length (length sub-patterns))
-       (define-values (fixed-syntax variable-syntax) (split-at syntax fixed-length))
-       (define fixed-result (multi-match matcher sub-patterns fixed-syntax (hash) def-env use-env))
-       (if (pattern-mismatch? fixed-result)
-           fixed-result
-           (let ([variable-result (ellipses-match ellipses-pattern variable-syntax def-env use-env)])
-             (if (pattern-mismatch? variable-result)
-                 variable-result
-                 (merge-envs fixed-result variable-result))))]
+       (split-or-fail 
+        ((input-matcher-source matcher) syntax (length sub-patterns))
+        (fixed-syntax variable-syntax)
+        (match-merge-static 
+         (multi-match matcher sub-patterns fixed-syntax (hash) def-env use-env)
+         (ellipses-match ellipses-pattern variable-syntax def-env use-env)))]
       [(improper-list _ sub-patterns end-pattern)
-       ;TODO check length here and return pattern-mismatch on bad lengths
-       (define sub-pattern-length (length sub-patterns))
-       (if (or (not (list? syntax)) (< (length syntax) sub-pattern-length))
-           (pattern-mismatch matcher syntax "syntax is not a list or is too short")
-           (begin
-             (let-values ([(fixed-syntax end-syntax) (split-at syntax sub-pattern-length)])
-               (multi-match 
-                matcher
-                (cons end-pattern sub-patterns)
-                (cons end-syntax fixed-syntax)
-                (hash)
-                def-env use-env))))]
+       (split-or-fail 
+        ((input-matcher-source matcher) syntax (length sub-patterns))
+        (fixed-syntax end-syntax)
+        (match-merge-static
+         (multi-match 
+          matcher
+          sub-patterns
+          fixed-syntax
+          (hash)
+          def-env use-env)
+         (match-input end-pattern end-syntax def-env use-env)))]
       [(fixed-list _ sub-patterns) 
        (multi-match matcher sub-patterns syntax (hash) def-env use-env)]
       [(datum datum)
