@@ -112,24 +112,18 @@
             (pattern-mismatch? result1) 
             result1 
             (match-merge-static-helper result1 expr-rest ...)))]))
-    
+  
+  ;matches all values in pattern-list against all syntax elements of syntax-list. Both should
+  ; be lists of the same size
   (define (multi-match parent-pattern pattern-list syntax-list init-value def-env use-env)
-    (define (inner-loop cur-value matcher-list syntax-list)
-      (if (pattern-mismatch? cur-value)
-          cur-value
-          (if (null? matcher-list)
-              cur-value
-              
-              (let ([next-value (match-input (car matcher-list) (car syntax-list) def-env use-env)])
-                (if (pattern-mismatch? next-value)
-                    next-value
-                    (inner-loop (merge-envs cur-value next-value) (cdr matcher-list) (cdr syntax-list)))))))
     (if (not (list? syntax-list))
         (pattern-mismatch parent-pattern syntax-list "syntax not a list")
         (if (not (eqv? (length pattern-list) (length syntax-list)))
             (pattern-mismatch (input-matcher-source parent-pattern) syntax-list 
                               (format "arity mismatch\n  pattern:~a\n  syntax:~a" pattern-list syntax-list))
-            (inner-loop init-value pattern-list syntax-list))))
+            (merge-match-results
+             ;I would like to make this lazy with stream-map, but stream-map only takes one argument list
+             (map (lambda (p s) (match-input p s def-env use-env)) pattern-list syntax-list)))))
         
   (define (match-input matcher syntax def-env use-env)
     (match matcher
