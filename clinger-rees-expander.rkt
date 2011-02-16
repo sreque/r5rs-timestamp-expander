@@ -181,5 +181,74 @@
          (if (pattern-mismatch? new-env)
              (break new-env)
              (merge cur-env new-env))))))
+  
+  (struct syntax-error exn:fail (syntax msg)
+          #:transparent)
+  
+  ;We still need to a way to report the nesting of identifiers inside ellipses lists
+  ;We still need to verify that pattern variables are not used more than once
+  ;We could do both of the above by analyzing the parsed pattern rather than intermingling the two.
+  ;this will return a matcher object
+  (define (parse-transformer-pattern syntax literal-identifiers)
+    (define (parse-list parsed-stack remaining-list)
+      (if (empty? remaining-list)
+          (fixed-list syntax (reverse parsed-stack))
+          (let ([first (car remaining-list)]
+                [rest (cdr remaining-list)])
+            (case first
+              ['... 
+               (if (not (empty? rest))
+                   (raise (syntax-error syntax "ellipses must occur at the end of a syntax list"))
+                   (if (empty? parsed-stack)
+                       (raise (syntax-error syntax "ellipses must occur after a pattern inside of a syntax list"))
+                       (ellipses-list syntax (reverse (cdr parsed-stack)) (car parsed-stack))))]
+              ['|.|
+               (if (or (empty? rest) (not (empty? (cdr rest))))
+                   (raise (syntax-error syntax "syntax list with a . must be followed by exactly one pattern"))
+                   (improper-list
+                    syntax
+                    (reverse parsed-stack)
+                    (parse-transformer-pattern first literal-identifiers)))]
+              [else
+               (parse-list 
+                (cons (parse-transformer-pattern first literal-identifiers) parsed-stack)
+                rest)]))))
+    (cond
+      [(list? syntax)
+       (parse-list '() syntax)]
+      [(symbol? syntax)
+       (if (set-member? literal-identifiers syntax)
+           (literal-identifier syntax)
+           (pattern-identifier syntax))]
+      [(or (string? syntax) (char? syntax) (number? syntax) (boolean? syntax))
+       (datum syntax)]
+      [else (raise (syntax-error syntax "Unrecognized syntax type"))]))
+  
+  (define (compute-ellipses-nesting top-matcher)
+    (define (dfs matcher prev-seen ellipses-level)
+      (match matcher
+        [(pattern-identifier id) 
+         (if (hash-has-key? prev-seen id)
+             (raise (syntax-error 
+                     (input-matcher-source top-matcher)
+                     (format "Duplicate identifier ~a detected in pattern" id)))
+             (hash-set prev-seen id ellipses-level))]
+        [(literal-identifier _) prev-seen]
+        [(improper-list syntax sub-patterns end-pattern)
+         (dfs end-pattern 
+              (dfs (fixed-list syntax sub-patterns) prev-seen ellipses-level)
+              ellipses-level)]
+        [(ellipses-list syntax sub-patterns end-pattern)
+         (dfs end-pattern 
+              (dfs (fixed-list syntax sub-patterns) prev-seen ellipses-level)
+              (add1 ellipses-level))]
+        [(fixed-list syntax sub-patterns)
+         (if (empty? sub-patterns)
+             prev-seen
+             (dfs (fixed-list syntax (cdr sub-patterns))
+                  (dfs (car sub-patterns) prev-seen ellipses-level) ellipses-level))]
+        [(datum _) prev-seen]))
+    (dfs top-matcher (hash) 0))
+             
     )
-      
+     

@@ -45,4 +45,16 @@
     [(_ x y) "values in the pair are different"]))
 #;(dup-pattern-test 'a 'a)
 #;(dup-pattern-test 'a 'b)
-    
+
+(define-syntax bad-ellipses
+  (syntax-rules ()
+    #;[(_ a ignored ... b) (list a b)]
+    [(_ ...) 'hi]))
+
+(bad-ellipses 1 2 3 4 5 6)
+
+#;(define-syntax dup-ids
+  (syntax-rules ()
+    [(_ a a) a]))
+
+#;(dup-ids 1 1)
