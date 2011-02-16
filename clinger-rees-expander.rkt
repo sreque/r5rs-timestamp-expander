@@ -50,7 +50,7 @@
           (invoke-loop cur-value lists)))
     (invoke-loop init lists))
   
-  (struct input-matcher (source))
+  (struct input-matcher (source) #:transparent)
   (define-syntax make-input-struct
     (syntax-rules ()
       [(_ name syms ...) (struct name input-matcher (syms ...) #:transparent)]))
@@ -61,8 +61,8 @@
     (make-input-struct pattern-identifier)
     (make-input-struct literal-identifier)
     (make-input-struct fixed-list sub-patterns)
-    (struct improper-list fixed-list (tail-pattern) #:transparent)
-    (struct ellipses-list fixed-list (tail-pattern) #:transparent)
+    (make-input-struct improper-list sub-patterns tail-pattern)
+    (make-input-struct ellipses-list sub-patterns tail-pattern)
     ;make fixed vector
     ;make ellipse vector
     (make-input-struct datum))
@@ -182,13 +182,13 @@
              (break new-env)
              (merge cur-env new-env))))))
   
-  (struct syntax-error exn:fail (syntax msg)
+  (struct syntax-error exn:fail (syntax)
           #:transparent)
   
-  ;We still need to a way to report the nesting of identifiers inside ellipses lists
-  ;We still need to verify that pattern variables are not used more than once
-  ;We could do both of the above by analyzing the parsed pattern rather than intermingling the two.
   ;this will return a matcher object
+  ;duplicate pattern variable usage will not be detected directly by this function for now.
+  ;As an alternative, this function could return both the matcher and the results of computed-ellipses-nesting,
+  ;which would also verify no pattern variable duplication for free
   (define (parse-transformer-pattern syntax literal-identifiers)
     (define (parse-list parsed-stack remaining-list)
       (if (empty? remaining-list)
@@ -198,13 +198,21 @@
             (case first
               ['... 
                (if (not (empty? rest))
-                   (raise (syntax-error syntax "ellipses must occur at the end of a syntax list"))
+                   (raise (syntax-error "ellipses must occur at the end of a syntax list"
+                                        (current-continuation-marks)
+                                        syntax))
                    (if (empty? parsed-stack)
-                       (raise (syntax-error syntax "ellipses must occur after a pattern inside of a syntax list"))
+                       (raise (syntax-error 
+                               "ellipses must occur after a pattern inside of a syntax list"
+                              (current-continuation-marks)
+                              syntax))
                        (ellipses-list syntax (reverse (cdr parsed-stack)) (car parsed-stack))))]
               ['|.|
                (if (or (empty? rest) (not (empty? (cdr rest))))
-                   (raise (syntax-error syntax "syntax list with a . must be followed by exactly one pattern"))
+                   (raise (syntax-error
+                           "syntax list with a . must be followed by exactly one pattern"
+                           (current-continuation-marks)
+                           syntax))
                    (improper-list
                     syntax
                     (reverse parsed-stack)
@@ -222,16 +230,23 @@
            (pattern-identifier syntax))]
       [(or (string? syntax) (char? syntax) (number? syntax) (boolean? syntax))
        (datum syntax)]
-      [else (raise (syntax-error syntax "Unrecognized syntax type"))]))
+      [else (raise (syntax-error 
+                    "Unrecognized syntax type" 
+                    (current-continuation-marks) 
+                    syntax))]))
   
+  ;Computes how many ellipses apply to each identifier in a matcher object.
+  ;Throws a syntax-error if a duplicate variable use is detected.
+  ;This function serves two purposes for now because both purposes involve almost identical work.
   (define (compute-ellipses-nesting top-matcher)
     (define (dfs matcher prev-seen ellipses-level)
       (match matcher
         [(pattern-identifier id) 
          (if (hash-has-key? prev-seen id)
              (raise (syntax-error 
-                     (input-matcher-source top-matcher)
-                     (format "Duplicate identifier ~a detected in pattern" id)))
+                     (format "Duplicate identifier '~a' detected in pattern" id)
+                     (current-continuation-marks)
+                     (input-matcher-source top-matcher)))
              (hash-set prev-seen id ellipses-level))]
         [(literal-identifier _) prev-seen]
         [(improper-list syntax sub-patterns end-pattern)

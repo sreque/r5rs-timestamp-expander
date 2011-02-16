@@ -119,12 +119,46 @@
   (check-equal? (match-input matcher syntax (hash) (hash)) (hash 'x syntax)))
 
 (let*
-    ([matcher 
-      (parse-transformer-pattern '(test1 test2 ...) (set))]
+    ([matcher (parse-transformer-pattern '(test1 test2 ...) (set))]
      [ids (compute-ellipses-nesting matcher)])
   (check-pred ellipses-list? matcher)
+  (check-equal? (ellipses-list-sub-patterns matcher) (list (pattern-identifier 'test1)))
+  (check-equal? (ellipses-list-tail-pattern matcher) (pattern-identifier 'test2))
   (check-equal? ids (hash 'test1 0 'test2 1)))
-  
 
+(let*
+    ([matcher 
+      (parse-transformer-pattern 
+       '(((((a ...) (b ...) (c ...)) ...) -) ...) (set))]
+     [ids (compute-ellipses-nesting matcher)])
+  (check-equal? 
+   matcher
+   (ellipses-list
+    '(((((a ...) (b ...) (c ...)) ...) -) ...) '()
+    (fixed-list 
+     '((((a ...) (b ...) (c ...)) ...) -)
+     (list
+      (ellipses-list
+       '(((a ...) (b ...) (c ...)) ...) '()
+       (fixed-list
+        '((a ...) (b ...) (c ...))
+        (list
+         (ellipses-list
+          '(a ...) '()
+          (pattern-identifier 'a))
+         (ellipses-list
+          '(b ...) '()
+          (pattern-identifier 'b))
+         (ellipses-list
+          '(c ...) '()
+          (pattern-identifier 'c)))))
+      (pattern-identifier '-)))) )              
+  (check-equal? ids (hash 'a 3 'b 3 'c 3 '- 1)))
+
+(let ([matcher 
+       (parse-transformer-pattern 
+        '((((a ...) (b ...)) ...) (d e f g . ((h (i j (k l m (a)))) ...))) (set))])
+  (check-exn syntax-error? (lambda () (compute-ellipses-nesting matcher)))
+  )
                
                                           
