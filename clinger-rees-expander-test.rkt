@@ -160,5 +160,24 @@
         '((((a ...) (b ...)) ...) (d e f g . ((h (i j (k l m (a)))) ...))) (set))])
   (check-exn syntax-error? (lambda () (compute-ellipses-nesting matcher)))
   )
-               
-                                          
+
+(let* ([matcher
+        (parse-transformer-pattern
+         '(a b |.| (d #t 5 "bob" #\c e)) (set 'd 'e))]
+       [ids (compute-ellipses-nesting matcher)])
+  (check-equal?
+   matcher
+   (improper-list
+    '(a b |.| (d #t 5 "bob" #\c e))
+    (list
+     (pattern-identifier 'a)
+     (pattern-identifier 'b))
+    (fixed-list
+     '(d #t 5 "bob" #\c e)
+     (list
+      (literal-identifier 'd)
+      (datum #t)
+      (datum 5)
+      (datum "bob")
+      (datum #\c)
+      (literal-identifier 'e))))))

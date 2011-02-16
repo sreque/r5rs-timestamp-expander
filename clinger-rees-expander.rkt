@@ -216,7 +216,7 @@
                    (improper-list
                     syntax
                     (reverse parsed-stack)
-                    (parse-transformer-pattern first literal-identifiers)))]
+                    (parse-transformer-pattern (car rest) literal-identifiers)))]
               [else
                (parse-list 
                 (cons (parse-transformer-pattern first literal-identifiers) parsed-stack)
