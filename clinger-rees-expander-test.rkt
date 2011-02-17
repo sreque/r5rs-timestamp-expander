@@ -180,4 +180,33 @@
       (datum 5)
       (datum "bob")
       (datum #\c)
-      (literal-identifier 'e))))))
+      (literal-identifier 'e)))))
+  (check-equal? ids (hash 'a 0 'b 0)))
+
+(let* ([template 
+        (parse-transformer-template
+         '(a ... ... #f "c" #\5 6 |.| ((very nested) |.| lists)))])
+  (check-equal?
+   template
+   (improper-template-list 
+    '(a ... ... #f "c" #\5 6 |.| ((very nested) |.| lists))
+    (list
+     (ellipses-template
+      'a ;TODO syntax should probably include the ellipses too
+      (template-identifier 'a)
+      2)
+     (template-datum #f)
+     (template-datum "c")
+     (template-datum #\5)
+     (template-datum 6))
+    (improper-template-list 
+     '((very nested) |.| lists)
+     (list
+      (template-list
+       '(very nested)
+       (list
+        (template-identifier 'very)
+        (template-identifier 'nested))))
+     (template-identifier 'lists)))))
+     
+     

@@ -53,6 +53,19 @@
 
 (bad-ellipses 1 2 3 4 5 6)
 
+(define-syntax ellipses-no-patterns
+  (syntax-rules ()
+    [(_ a ...) '((a 6) ...)]))
+
+(ellipses-no-patterns)
+
+
+(let ([a 1])
+  (define-syntax literal-template
+  (syntax-rules (a)
+    [(_ a) a]))
+  (literal-template a))
+
 #;(define-syntax dup-ids
   (syntax-rules ()
     [(_ a a) a]))

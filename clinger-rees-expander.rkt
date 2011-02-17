@@ -51,10 +51,15 @@
     (invoke-loop init lists))
   
   (struct input-matcher (source) #:transparent)
+  (struct output-template (source) #:transparent)
+  
   (define-syntax make-input-struct
     (syntax-rules ()
       [(_ name syms ...) (struct name input-matcher (syms ...) #:transparent)]))
   
+  (define-syntax make-output-struct
+    (syntax-rules ()
+      [(_ name syms ...) (struct name output-template (syms ...) #:transparent)]))
   ;how do I do an algebraic data type in Racket?
   ;This is the input matcher type's sub-types
   (begin
@@ -67,6 +72,14 @@
     ;make ellipse vector
     (make-input-struct datum))
   
+  (begin
+    (make-output-struct template-identifier)
+    (make-output-struct ellipses-template inner-template num-ellipses)
+    (make-output-struct template-list sub-templates)
+    (make-output-struct improper-template-list sub-templates tail-template)
+    ;make template vector
+    (make-output-struct template-datum))
+     
   (struct pattern-mismatch (pattern syntax msg)
           #:transparent)
 
@@ -228,13 +241,72 @@
        (if (set-member? literal-identifiers syntax)
            (literal-identifier syntax)
            (pattern-identifier syntax))]
-      [(or (string? syntax) (char? syntax) (number? syntax) (boolean? syntax))
+      [(syntax-datum? syntax)
        (datum syntax)]
       [else (raise (syntax-error 
                     "Unrecognized syntax type" 
                     (current-continuation-marks) 
                     syntax))]))
   
+  (define (syntax-datum? syntax)
+    (or (string? syntax) (char? syntax) (number? syntax) (boolean? syntax)))
+  
+  ;TODO
+  ;verify that each ellipses template contains at least one pattern identifier
+  ;verify that ellipses nesting in output matches input
+  (define (parse-transformer-template syntax)
+    (define (parse-list parsed-stack remaining-list)
+      (if (empty? remaining-list)
+          (template-list syntax (reverse parsed-stack))
+          (let ([first (car remaining-list)]
+                [rest (cdr remaining-list)])
+            (case first
+              ['...
+               (if (empty? parsed-stack)
+                       (raise (syntax-error 
+                               "ellipses must occur after a pattern inside of a syntax list"
+                              (current-continuation-marks)
+                              syntax))
+                       (let ([first-parsed (car parsed-stack)])
+                         (parse-list 
+                          (cons 
+                           (if (ellipses-template? first-parsed)
+                               (ellipses-template 
+                                (output-template-source first-parsed)
+                                (ellipses-template-inner-template first-parsed)
+                                (add1 (ellipses-template-num-ellipses first-parsed)))
+                               (ellipses-template 
+                                (output-template-source first-parsed)
+                                first-parsed
+                                1))
+                           (cdr parsed-stack)) 
+                          rest)))]
+              ['|.|
+               (if (or (empty? rest) (not (empty? (cdr rest))))
+                   (raise (syntax-error
+                           "syntax list with a . must be followed by exactly one pattern"
+                           (current-continuation-marks)
+                           syntax))
+                   (improper-template-list
+                    syntax
+                    (reverse parsed-stack)
+                    (parse-transformer-template (car rest))))]
+              [else
+               (parse-list 
+                (cons (parse-transformer-template first) parsed-stack)
+                rest)]))))
+    (cond
+      [(list? syntax)
+       (parse-list '() syntax)]
+      [(symbol? syntax)
+       (template-identifier syntax)]
+      [(syntax-datum? syntax)
+       (template-datum syntax)]
+      [else (raise (syntax-error 
+                    "Unrecognized syntax type" 
+                    (current-continuation-marks) 
+                    syntax))]))
+      
   ;Computes how many ellipses apply to each identifier in a matcher object.
   ;Throws a syntax-error if a duplicate variable use is detected.
   ;This function serves two purposes for now because both purposes involve almost identical work.
@@ -263,7 +335,6 @@
              (dfs (fixed-list syntax (cdr sub-patterns))
                   (dfs (car sub-patterns) prev-seen ellipses-level) ellipses-level))]
         [(datum _) prev-seen]))
-    (dfs top-matcher (hash) 0))
-             
+    (dfs top-matcher (hash) 0))             
     )
      
