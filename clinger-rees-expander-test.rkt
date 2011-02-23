@@ -74,6 +74,9 @@
   (define result (match-input matcher syntax (hash) (hash)))
   (check-equal? result (hash id1 '(invoke return value) id2 'a id3 'b)))
 
+;This test is flawed and needs to be fixed. 
+;datum should not be used to match symbols. 
+;They should be used to match lists of the form (quote symbol)
 (let* ([syntax '(a b c (d e (f g h) i) j k)]
        [id1 'x]
        [id2 'y]
@@ -208,5 +211,30 @@
         (template-identifier 'very)
         (template-identifier 'nested))))
      (template-identifier 'lists)))))
-     
-     
+
+(let* ([matcher
+        (parse-transformer-pattern
+         '((a ...) b) (set))]
+       [matcher-nesting 
+        (compute-ellipses-nesting matcher)]
+       [template1
+        (parse-transformer-template
+         '(a ...))]
+       [template2
+        (parse-transformer-template
+         '(b c d f))]
+       [template3 
+        (parse-transformer-template
+         '(g (f 'a (h a ...) "a" b)))]
+       [bad-template1
+        (parse-transformer-template
+         '((a b) ...))]
+       [bad-template2
+        (parse-transformer-template
+        '(a (g ...) b))])
+  (for ([template (list template1 template2 template3)])
+    (verify-template-ellipses-nesting template matcher-nesting))
+  (for ([template (list bad-template1 bad-template2)])
+    (check-exn syntax-error? 
+               (lambda () 
+                 (verify-template-ellipses-nesting template matcher-nesting)))))

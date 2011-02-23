@@ -256,6 +256,7 @@
   ;verify that ellipses nesting in output matches input
   (define (parse-transformer-template syntax)
     (define (parse-list parsed-stack remaining-list)
+     #;(printf "  parse-list: ~a ~a\n" parsed-stack remaining-list)
       (if (empty? remaining-list)
           (template-list syntax (reverse parsed-stack))
           (let ([first (car remaining-list)]
@@ -295,9 +296,15 @@
                (parse-list 
                 (cons (parse-transformer-template first) parsed-stack)
                 rest)]))))
+    #;(printf "parser-transformer-template: ~a list=~a\n" syntax (list? syntax))
     (cond
       [(list? syntax)
-       (parse-list '() syntax)]
+       (if (and (not (empty? syntax))
+                (eqv? (car syntax) 'quote)
+                ;TODO handle rebinding of quote
+                )
+           (template-datum (cadr syntax))
+           (parse-list '() syntax))]
       [(symbol? syntax)
        (template-identifier syntax)]
       [(syntax-datum? syntax)
@@ -336,5 +343,41 @@
                   (dfs (car sub-patterns) prev-seen ellipses-level) ellipses-level))]
         [(datum _) prev-seen]))
     (dfs top-matcher (hash) 0))             
+
+  (define (verify-template-ellipses-nesting top-template expected-nestings)
+    (define (dfs template prev-seen ellipses-level)
+      (match template
+        [(template-identifier id)
+         (define prev-value (hash-ref prev-seen id null))
+         (define expected-value (hash-ref expected-nestings id null))
+         (when (and (not (null? expected-value))
+                    (not (eqv? expected-value ellipses-level)))
+           (raise (syntax-error
+                   (format "Ellipses nesting of identifier ~a in template does not match nesting in pattern" id)
+                   (current-continuation-marks)
+                   (output-template-source template))))
+         (when (and (not (null? prev-value))
+                    (not (eqv? prev-value ellipses-level)))
+           (raise (syntax-error 
+                   (format "Identifier '~a' is applied to an inconsistent number of ... in template" id)
+                   (current-continuation-marks)
+                   (output-template-source top-template))))
+         (if (null? expected-value)
+             prev-seen
+             (hash-set prev-seen id ellipses-level))]
+        [(ellipses-template source inner-template num-ellipses)
+         (dfs inner-template prev-seen (add1 ellipses-level))]
+        [(template-list source sub-templates)
+         (if (empty? sub-templates)
+             prev-seen
+             (dfs (template-list source (cdr sub-templates))
+                  (dfs (car sub-templates) prev-seen ellipses-level)
+                  ellipses-level))]
+        [(improper-template-list source sub-templates tail-template)
+         (dfs tail-template
+              (dfs (template-list source sub-templates) prev-seen ellipses-level)
+              ellipses-level)]
+        [(template-datum value) prev-seen]))
+    (dfs top-template (hash) 0))
     )
      
