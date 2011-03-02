@@ -188,7 +188,8 @@
 
 (let* ([template 
         (parse-transformer-template
-         '(a ... ... #f "c" #\5 6 |.| ((very nested) |.| lists)))])
+         '(a ... ... #f "c" #\5 6 |.| ((very nested) |.| lists))
+         (hash) (hash))])
   (check-equal?
    template
    (improper-template-list 
@@ -219,22 +220,30 @@
         (compute-ellipses-nesting matcher)]
        [template1
         (parse-transformer-template
-         '(a ...))]
+         '(a ...) (hash) (hash))]
        [template2
         (parse-transformer-template
-         '(b c d f))]
+         '(b c d f) (hash) (hash))]
        [template3 
         (parse-transformer-template
-         '(g (f 'a (h a ...) "a" b)))]
+         '(g (f 'a (h a ...) "a" b)) (hash) (hash))]
        [bad-template1
         (parse-transformer-template
-         '((a b) ...))]
+         '((a b) ...) (hash) (hash))]
        [bad-template2
         (parse-transformer-template
-        '(a (g ...) b))])
+        '(a (g ...) b) (hash) (hash))])
   (for ([template (list template1 template2 template3)])
     (verify-template-ellipses-nesting template matcher-nesting))
   (for ([template (list bad-template1 bad-template2)])
     (check-exn syntax-error? 
                (lambda () 
                  (verify-template-ellipses-nesting template matcher-nesting)))))
+
+(let* ([bad-syntax
+        '(5 ...)]
+       [really-nested-identifier-syntax
+        '((1 2 3 |.| (4 5 |.| ('c "d" a #\g))) ...)])
+  (check-exn syntax-error? (lambda () (parse-transformer-template bad-syntax (hash) (hash))))
+  (parse-transformer-template really-nested-identifier-syntax (hash) (hash))
+  #t)

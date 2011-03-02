@@ -55,7 +55,8 @@
 
 (define-syntax ellipses-no-patterns
   (syntax-rules ()
-    [(_ a ...) '((a 6) ...)]))
+    [(_ a ...) '((a 6) ...)]
+    [(_ 5 ...) 'hi]))
 
 (ellipses-no-patterns)
 

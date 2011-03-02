@@ -251,10 +251,27 @@
   (define (syntax-datum? syntax)
     (or (string? syntax) (char? syntax) (number? syntax) (boolean? syntax)))
   
-  ;TODO
-  ;verify that each ellipses template contains at least one pattern identifier
-  ;verify that ellipses nesting in output matches input
-  (define (parse-transformer-template syntax)
+  (define (parse-transformer-template syntax env menv)
+    (define quote-redefined? 
+      (or
+       (hash-has-key? env 'quote)
+       (hash-has-key? menv 'quote)))
+    (define (verify-has-identifier template)
+      (let/ec break
+        (define body
+          (match-lambda
+            ((template-identifier _) (break template))
+            ((ellipses-template _ inner _) (body inner))
+            ((template-list _ xs) (for ([x xs]) (body x)))
+            ((improper-template-list _ xs tail)
+             (for ([x xs]) (body x))
+             (body tail))
+            ((template-datum _) #f)))
+        (body template)
+        (raise (syntax-error 
+                "Pattern preceding an ellipses  must contain at least one identifier"
+                (current-continuation-marks)
+                (output-template-source template)))))
     (define (parse-list parsed-stack remaining-list)
      #;(printf "  parse-list: ~a ~a\n" parsed-stack remaining-list)
       (if (empty? remaining-list)
@@ -268,17 +285,17 @@
                                "ellipses must occur after a pattern inside of a syntax list"
                               (current-continuation-marks)
                               syntax))
-                       (let ([first-parsed (car parsed-stack)])
+                       (let ([top-parsed (car parsed-stack)])
                          (parse-list 
                           (cons 
-                           (if (ellipses-template? first-parsed)
+                           (if (ellipses-template? top-parsed)
                                (ellipses-template 
-                                (output-template-source first-parsed)
-                                (ellipses-template-inner-template first-parsed)
-                                (add1 (ellipses-template-num-ellipses first-parsed)))
+                                (output-template-source top-parsed)
+                                (ellipses-template-inner-template top-parsed)
+                                (add1 (ellipses-template-num-ellipses top-parsed)))
                                (ellipses-template 
-                                (output-template-source first-parsed)
-                                first-parsed
+                                (output-template-source top-parsed)
+                                (verify-has-identifier top-parsed)
                                 1))
                            (cdr parsed-stack)) 
                           rest)))]
@@ -291,18 +308,17 @@
                    (improper-template-list
                     syntax
                     (reverse parsed-stack)
-                    (parse-transformer-template (car rest))))]
+                    (parse-transformer-template (car rest) env menv)))]
               [else
                (parse-list 
-                (cons (parse-transformer-template first) parsed-stack)
+                (cons (parse-transformer-template first env menv) parsed-stack)
                 rest)]))))
     #;(printf "parser-transformer-template: ~a list=~a\n" syntax (list? syntax))
     (cond
       [(list? syntax)
        (if (and (not (empty? syntax))
                 (eqv? (car syntax) 'quote)
-                ;TODO handle rebinding of quote
-                )
+                quote-redefined?)
            (template-datum (cadr syntax))
            (parse-list '() syntax))]
       [(symbol? syntax)
@@ -310,7 +326,7 @@
       [(syntax-datum? syntax)
        (template-datum syntax)]
       [else (raise (syntax-error 
-                    "Unrecognized syntax type" 
+                    (format "Unrecognized type for syntax: ~a" syntax) 
                     (current-continuation-marks) 
                     syntax))]))
       
