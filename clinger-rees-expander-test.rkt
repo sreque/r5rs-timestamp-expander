@@ -189,7 +189,7 @@
 (let* ([template 
         (parse-transformer-template
          '(a ... ... #f "c" #\5 6 |.| ((very nested) |.| lists))
-         (hash) (hash))])
+         (set 'a) (hash))])
   (check-equal?
    template
    (improper-template-list 
@@ -198,7 +198,8 @@
      (ellipses-template
       'a ;TODO syntax should probably include the ellipses too
       (template-identifier 'a)
-      2)
+      2
+      (set 'a))
      (template-datum #f)
      (template-datum "c")
      (template-datum #\5)
@@ -218,21 +219,23 @@
          '((a ...) b) (set))]
        [matcher-nesting 
         (compute-ellipses-nesting matcher)]
+       [pattern-ids (apply set (hash-keys matcher-nesting))]
        [template1
         (parse-transformer-template
-         '(a ...) (hash) (hash))]
+         '(a ...) pattern-ids (hash))]
        [template2
         (parse-transformer-template
-         '(b c d f) (hash) (hash))]
+         '(b c d f) pattern-ids (hash))]
        [template3 
         (parse-transformer-template
-         '(g (f 'a (h a ...) "a" b)) (hash) (hash))]
+         '(g (f 'a (h a ...) "a" b)) pattern-ids (hash))]
        [bad-template1
         (parse-transformer-template
-         '((a b) ...) (hash) (hash))]
+         '((a b) ...) pattern-ids (hash))]
        [bad-template2
         (parse-transformer-template
-        '(a (g ...) b) (hash) (hash))])
+        '(a (a ...) b) pattern-ids (hash))])
+  #t
   (for ([template (list template1 template2 template3)])
     (verify-template-ellipses-nesting template matcher-nesting))
   (for ([template (list bad-template1 bad-template2)])
@@ -244,6 +247,37 @@
         '(5 ...)]
        [really-nested-identifier-syntax
         '((1 2 3 |.| (4 5 |.| ('c "d" a #\g))) ...)])
-  (check-exn syntax-error? (lambda () (parse-transformer-template bad-syntax (hash) (hash))))
-  (parse-transformer-template really-nested-identifier-syntax (hash) (hash))
+  (check-exn syntax-error? (lambda () (parse-transformer-template bad-syntax (set 'a) (hash))))
+  (parse-transformer-template really-nested-identifier-syntax (set 'a) (hash))
   #t)
+
+(let* ([pattern
+         (parse-transformer-pattern
+          '((((a ...) ...)) ...) (set))]
+        [nesting (compute-ellipses-nesting pattern)]
+        [good1
+          (parse-transformer-template
+           '((a ... ...) ...)
+           (set 'a) (hash))]
+        [good2
+         (parse-transformer-template
+          '(a ... ... ...)
+          (set 'a) (hash))]
+        [good3
+         (parse-transformer-template
+          '((a ...) ... ...)
+          (set 'a) (hash))]
+        [bad1
+         (parse-transformer-template
+          '((a ... ... ...) ...)
+          (set 'a) (hash))]
+        [bad2
+         (parse-transformer-template
+          '((a ... ...) ... ...)
+          (set 'a) (hash))])
+   (for ([t (list good1 good2 good3)])
+     (verify-template-ellipses-nesting t nesting))
+   (for ([t (list bad1 bad2)])
+     (check-exn syntax-error? 
+                (lambda () 
+                  (verify-template-ellipses-nesting t nesting)))))

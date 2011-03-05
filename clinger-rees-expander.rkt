@@ -62,6 +62,8 @@
       [(_ name syms ...) (struct name output-template (syms ...) #:transparent)]))
   ;how do I do an algebraic data type in Racket?
   ;This is the input matcher type's sub-types
+  
+  ;TODO rename to make-pattern-struct
   (begin
     (make-input-struct pattern-identifier)
     (make-input-struct literal-identifier)
@@ -72,9 +74,10 @@
     ;make ellipse vector
     (make-input-struct datum))
   
+  ;TODO rename to make-template-struct
   (begin
     (make-output-struct template-identifier)
-    (make-output-struct ellipses-template inner-template num-ellipses)
+    (make-output-struct ellipses-template inner-template num-ellipses pattern-ids)
     (make-output-struct template-list sub-templates)
     (make-output-struct improper-template-list sub-templates tail-template)
     ;make template vector
@@ -251,27 +254,33 @@
   (define (syntax-datum? syntax)
     (or (string? syntax) (char? syntax) (number? syntax) (boolean? syntax)))
   
-  (define (parse-transformer-template syntax env menv)
+  (define (parse-transformer-template syntax pattern-ids env)
     (define quote-redefined? 
-      (or
-       (hash-has-key? env 'quote)
-       (hash-has-key? menv 'quote)))
-    (define (verify-has-identifier template)
-      (let/ec break
-        (define body
-          (match-lambda
-            ((template-identifier _) (break template))
-            ((ellipses-template _ inner _) (body inner))
-            ((template-list _ xs) (for ([x xs]) (body x)))
-            ((improper-template-list _ xs tail)
-             (for ([x xs]) (body x))
-             (body tail))
-            ((template-datum _) #f)))
-        (body template)
-        (raise (syntax-error 
-                "Pattern preceding an ellipses  must contain at least one identifier"
+      (hash-has-key? env 'quote))
+    (define (find-pattern-ids template)
+      (define result
+        (let loop ([t template]
+                   [ids (set)])
+          (match t
+            [(template-identifier id)
+             (if (set-member? pattern-ids id)
+                 (set-add ids id)
+                 ids)]
+            [(ellipses-template _ inner _ more-ids)
+             (set-union ids more-ids)]
+            [(template-list _ xs)
+             (for/fold ((accum ids))
+               ((x xs))
+               (loop x accum))]
+            [(improper-template-list source xs tail)
+             (loop tail (loop (template-list source xs) ids))]
+            [(template-datum _) ids])))
+      (if (set-empty? result)
+          (raise (syntax-error 
+                  "Pattern preceding an ellipses  must contain at least one identifier"
                 (current-continuation-marks)
-                (output-template-source template)))))
+                (output-template-source template)))
+          result))
     (define (parse-list parsed-stack remaining-list)
      #;(printf "  parse-list: ~a ~a\n" parsed-stack remaining-list)
       (if (empty? remaining-list)
@@ -292,11 +301,13 @@
                                (ellipses-template 
                                 (output-template-source top-parsed)
                                 (ellipses-template-inner-template top-parsed)
-                                (add1 (ellipses-template-num-ellipses top-parsed)))
+                                (add1 (ellipses-template-num-ellipses top-parsed))
+                                (ellipses-template-pattern-ids top-parsed))
                                (ellipses-template 
                                 (output-template-source top-parsed)
-                                (verify-has-identifier top-parsed)
-                                1))
+                                top-parsed
+                                1
+                                (find-pattern-ids top-parsed)))
                            (cdr parsed-stack)) 
                           rest)))]
               ['|.|
@@ -308,17 +319,17 @@
                    (improper-template-list
                     syntax
                     (reverse parsed-stack)
-                    (parse-transformer-template (car rest) env menv)))]
+                    (parse-transformer-template (car rest) pattern-ids env)))]
               [else
                (parse-list 
-                (cons (parse-transformer-template first env menv) parsed-stack)
+                (cons (parse-transformer-template first pattern-ids env) parsed-stack)
                 rest)]))))
     #;(printf "parser-transformer-template: ~a list=~a\n" syntax (list? syntax))
     (cond
       [(list? syntax)
        (if (and (not (empty? syntax))
                 (eqv? (car syntax) 'quote)
-                quote-redefined?)
+                (not quote-redefined?))
            (template-datum (cadr syntax))
            (parse-list '() syntax))]
       [(symbol? syntax)
@@ -361,39 +372,25 @@
     (dfs top-matcher (hash) 0))             
 
   (define (verify-template-ellipses-nesting top-template expected-nestings)
-    (define (dfs template prev-seen ellipses-level)
+    (define (dfs template ellipses-level)
       (match template
         [(template-identifier id)
-         (define prev-value (hash-ref prev-seen id null))
          (define expected-value (hash-ref expected-nestings id null))
          (when (and (not (null? expected-value))
                     (not (eqv? expected-value ellipses-level)))
            (raise (syntax-error
                    (format "Ellipses nesting of identifier ~a in template does not match nesting in pattern" id)
                    (current-continuation-marks)
-                   (output-template-source template))))
-         (when (and (not (null? prev-value))
-                    (not (eqv? prev-value ellipses-level)))
-           (raise (syntax-error 
-                   (format "Identifier '~a' is applied to an inconsistent number of ... in template" id)
-                   (current-continuation-marks)
-                   (output-template-source top-template))))
-         (if (null? expected-value)
-             prev-seen
-             (hash-set prev-seen id ellipses-level))]
-        [(ellipses-template source inner-template num-ellipses)
-         (dfs inner-template prev-seen (add1 ellipses-level))]
+                   (output-template-source template))))]
+        [(ellipses-template source inner-template num-ellipses pattern-ids)
+         (dfs inner-template (+ num-ellipses ellipses-level))]
         [(template-list source sub-templates)
-         (if (empty? sub-templates)
-             prev-seen
-             (dfs (template-list source (cdr sub-templates))
-                  (dfs (car sub-templates) prev-seen ellipses-level)
-                  ellipses-level))]
+         (for ([t sub-templates])
+           (dfs t ellipses-level))]
         [(improper-template-list source sub-templates tail-template)
-         (dfs tail-template
-              (dfs (template-list source sub-templates) prev-seen ellipses-level)
-              ellipses-level)]
-        [(template-datum value) prev-seen]))
-    (dfs top-template (hash) 0))
+         (dfs (template-list source sub-templates) ellipses-level)
+         (dfs tail-template ellipses-level)]
+        [(template-datum value) #f ]))
+    (dfs top-template 0))
     )
      
