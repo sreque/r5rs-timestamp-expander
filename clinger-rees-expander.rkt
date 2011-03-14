@@ -330,6 +330,7 @@
        (if (and (not (empty? syntax))
                 (eqv? (car syntax) 'quote)
                 (not quote-redefined?))
+           ;TODO verify the list is of length two
            (template-datum (cadr syntax))
            (parse-list '() syntax))]
       [(symbol? syntax)
@@ -369,7 +370,25 @@
              (dfs (fixed-list syntax (cdr sub-patterns))
                   (dfs (car sub-patterns) prev-seen ellipses-level) ellipses-level))]
         [(datum _) prev-seen]))
-    (dfs top-matcher (hash) 0))             
+    (dfs top-matcher (hash) 0))
+  
+  ;finds identifiers that aren't pattern identifiers
+  (define (find-regular-identifiers template pattern-ids)
+    (define (dfs t result)
+      (match t
+        [(template-identifier id)
+         (if (set-member? pattern-ids id)
+             result
+             (set-add result id))]
+        [(ellipses-template _ inner _ _)
+         (dfs inner result)]
+        [(template-list _ inner-templates)
+         (for/fold ((r result)) ((_t inner-templates)) (dfs _t r))
+         (foldl (lambda (sub-t r) (dfs sub-t r))  result inner-templates)]
+        [(improper-template-list _ ts tail)
+         (for/fold ((r (dfs tail result))) ((t ts)) (dfs t r))]
+        [(template-datum _) result]))
+    (dfs template (set)))
 
   (define (verify-template-ellipses-nesting top-template expected-nestings)
     (define (dfs template ellipses-level)
@@ -392,5 +411,77 @@
          (dfs tail-template ellipses-level)]
         [(template-datum value) #f ]))
     (dfs top-template 0))
+  
+  ;flattens a fixed number of levels of a list.
+  ;Does not handle arbitrary s-expressions.
+  ;Assumes the number of levels actually exists
+  ;depth should be >= 0.
+  (define (flatten# lst depth)
+    (define (recur k lst depth)
+      (define rest (cdr lst))
+      (define sub-k
+        (if (null? rest)
+            k
+            (lambda () (recur k rest depth))))
+      (body sub-k (car lst) (sub1 depth)))
+    (define (body k lst depth)
+      #;(printf "flatten#-body lst=~a depth=~a\n" lst depth)
+      (if 
+       (<= depth 0)
+       (let loop ([cur lst])
+         (if (null? cur)
+             (k)
+             (cons (car cur) (loop (cdr cur)))))
+       (recur k lst depth)))
+    (if (or (null? lst) (<= depth 0))
+        lst
+        (body (lambda () '()) lst depth)))
+                  
+          
+  ; converts a template struct into a function of the form 
+  ; identifier-substitution-map -> syntax.
+  (define (make-rewriter template)
+    (define rewriter-fuser 
+      (match-lambda
+        ((? ellipses-template?) append)
+        (else cons)))
+    (define (list-fuser rewriters fusers base-case-function)
+      (lambda (sub-map)
+        (foldr 
+         (lambda (r f a) (f (r sub-map) a))
+         (base-case-function sub-map) rewriters fusers)))
+    (match template
+      [(template-identifier id)
+       (lambda (sub-map) (hash-ref sub-map id))]
+      [(ellipses-template _ inner num-ellipses pattern-ids)
+       (define inner-rewriter (make-rewriter inner)) 
+       (lambda (sub-map)
+         (define xss
+           ;all sub-lists should be of the same length
+           ;Is there any case where this might not be true that we need to check for?
+           (for/list ([id pattern-ids])
+             (flatten# (hash-ref sub-map id) (sub1 num-ellipses))))
+         (apply 
+          map 
+          (lambda args 
+            (define _sub-map sub-map)
+            (for ([k pattern-ids]
+                  [v args])
+              (set! _sub-map (hash-set _sub-map k v)))
+            (inner-rewriter _sub-map)) xss))]
+      [(template-list _ inner-templates)
+       (list-fuser
+        (map (lambda (t) (make-rewriter t)) inner-templates)
+        (map (lambda (t) (rewriter-fuser t)) inner-templates)
+        (lambda (ignore) '()))]
+      [(improper-template-list source sub-templates tail-template)
+       (define tail-rewriter (make-rewriter tail-template))
+       (list-fuser
+        (map (lambda (t) make-rewriter t) sub-templates)
+        (map (lambda (t) rewriter-fuser t) sub-templates)
+        (lambda (sub-map) (tail-rewriter sub-map)))]
+      [(template-datum d) 
+       (lambda (ignored) d)]))
+        
     )
      

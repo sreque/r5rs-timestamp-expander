@@ -186,6 +186,25 @@
       (literal-identifier 'e)))))
   (check-equal? ids (hash 'a 0 'b 0)))
 
+(let*
+    ([template
+      (parse-transformer-template
+       '((a ...))
+       (set 'a) (hash))])
+  (check-equal?
+   template
+   (template-list 
+    '((a ...))
+    (list 
+     (template-list
+      '(a ...)
+      (list
+       (ellipses-template
+        'a
+        (template-identifier 'a)
+        1
+        (set 'a))))))))
+
 (let* ([template 
         (parse-transformer-template
          '(a ... ... #f "c" #\5 6 |.| ((very nested) |.| lists))
@@ -281,3 +300,85 @@
      (check-exn syntax-error? 
                 (lambda () 
                   (verify-template-ellipses-nesting t nesting)))))
+
+(let* ([3-level 
+        '(
+          ((a b c) (d e f)) 
+          ((g h i) (j k l)) 
+          ((m n o) (p q r) (s t u)))])
+  (check-equal?
+   (flatten# 3-level 1)
+   '((a b c) (d e f) (g h i) (j k l) (m n o) (p q r) (s t u)))
+  (check-equal?
+   (flatten# 3-level 2)
+   '(a b c d e f g h i j k l m n o p q r s t u)))
+
+(let ([4-level
+        '(
+          (
+           (
+            (a b) (c d))
+           (
+            (e f) (g h))
+           (
+            (i j) (k l) (m n))
+            (
+             (o p q r)))
+          (
+           (
+            (s t))
+           (
+            (u v) (w x) (y z 1 2 3))))])
+  (check-equal? (flatten# 4-level 0) 4-level)
+  (check-equal?
+   (flatten# 4-level 1)
+   '(
+      (
+       (a b) (c d))
+      (
+       (e f) (g h))
+      (
+       (i j) (k l) (m n))
+      (
+       (o p q r))
+      (
+       (s t))
+      (
+       (u v) (w x) (y z 1 2 3))))
+  (check-equal?
+   (flatten# 4-level 2)
+   '(
+     (a b) (c d) (e f) (g h)
+           (i j) (k l) (m n) 
+           (o p q r) (s t) (u v) 
+           (w x) (y z 1 2 3)))
+  (check-equal? 
+   (flatten# 4-level 3)
+   '(a b c d e f g h i j k l m n o p q r s t u v w x y z 1 2 3))
+  (check-exn exn:fail:contract?
+               (lambda () (flatten# 4-level 4))))
+                  
+(let* 
+    ([pattern-ids (set 'a 'b 'c 'd)]
+     [template
+      (parse-transformer-template
+       '((a ...) ((b c (d ...)) ...) . (e f g ('h "i" (#\k)) 'l))
+       pattern-ids (hash))]
+     [reg-ids (find-regular-identifiers template pattern-ids)]
+     [rewriter (make-rewriter template)]
+     [sub-map 
+      (hash 
+       'a (list 1 2 3)
+       'b (list 4 5 6)
+       'c (list 7 8 9)
+       'd '((10 11 12) (13 14 15) (16 17 18))
+       'e 'e.1
+       'f 'f.1
+       'g 'g.1)])
+  (check-equal? 
+   reg-ids
+   (set 'e 'f 'g))
+  (check-equal?
+   (rewriter sub-map)
+   '((1 2 3) ((4 7 (10 11 12)) (5 8 (13 14 15)) (6 9 (16 17 18))) . 
+             (e.1 f.1 g.1 (h "i" (#\k)) l))))
