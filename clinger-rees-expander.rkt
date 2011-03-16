@@ -437,7 +437,16 @@
         lst
         (body (lambda () '()) lst depth)))
                   
-          
+  ;This version is simpler but I think it has a worse
+  ;asymptotic complexity than above.
+  (define (flatten#-v2 l d)
+    #;(if (and (list? l) (not (zero? d)))
+        (apply append (map (curryr flatten2 (sub1 d)) l))
+        l)
+    (if (or (not (list? l)) (empty? l) (zero? d))
+        l
+        (append (flatten2 (first l) (sub1 d)) (flatten2 (rest l) d))))
+        
   ; converts a template struct into a function of the form 
   ; identifier-substitution-map -> syntax.
   (define (make-rewriter template)
