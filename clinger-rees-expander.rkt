@@ -50,38 +50,37 @@
           (invoke-loop cur-value lists)))
     (invoke-loop init lists))
   
-  (struct input-matcher (source) #:transparent)
+  (struct input-pattern (source) #:transparent)
   (struct output-template (source) #:transparent)
   
-  (define-syntax make-input-struct
+  (define-syntax make-pattern-struct
     (syntax-rules ()
-      [(_ name syms ...) (struct name input-matcher (syms ...) #:transparent)]))
+      [(_ name syms ...) (struct name input-pattern (syms ...) #:transparent)]))
   
-  (define-syntax make-output-struct
+  (define-syntax make-template-struct
     (syntax-rules ()
       [(_ name syms ...) (struct name output-template (syms ...) #:transparent)]))
   ;how do I do an algebraic data type in Racket?
-  ;This is the input matcher type's sub-types
+  ;This is the input pattern type's sub-types
   
-  ;TODO rename to make-pattern-struct
   (begin
-    (make-input-struct pattern-identifier)
-    (make-input-struct literal-identifier)
-    (make-input-struct fixed-list sub-patterns)
-    (make-input-struct improper-list sub-patterns tail-pattern)
-    (make-input-struct ellipses-list sub-patterns tail-pattern)
+    (make-pattern-struct pattern-identifier)
+    (make-pattern-struct literal-identifier)
+    (make-pattern-struct fixed-list sub-patterns)
+    (make-pattern-struct improper-list sub-patterns tail-pattern)
+    (make-pattern-struct ellipses-list sub-patterns tail-pattern)
     ;make fixed vector
     ;make ellipse vector
-    (make-input-struct datum))
+    (make-pattern-struct datum))
   
   ;TODO rename to make-template-struct
   (begin
-    (make-output-struct template-identifier)
-    (make-output-struct ellipses-template inner-template num-ellipses pattern-ids)
-    (make-output-struct template-list sub-templates)
-    (make-output-struct improper-template-list sub-templates tail-template)
+    (make-template-struct template-identifier)
+    (make-template-struct ellipses-template inner-template num-ellipses pattern-ids)
+    (make-template-struct template-list sub-templates)
+    (make-template-struct improper-template-list sub-templates tail-template)
     ;make template vector
-    (make-output-struct template-datum))
+    (make-template-struct template-datum))
      
   (struct pattern-mismatch (pattern syntax msg)
           #:transparent)
@@ -135,48 +134,48 @@
     (if (not (list? syntax-list))
         (pattern-mismatch parent-pattern syntax-list "syntax not a list")
         (if (not (eqv? (length pattern-list) (length syntax-list)))
-            (pattern-mismatch (input-matcher-source parent-pattern) syntax-list 
+            (pattern-mismatch (input-pattern-source parent-pattern) syntax-list 
                               (format "arity mismatch\n  pattern:~a\n  syntax:~a" pattern-list syntax-list))
             (merge-match-results
              ;I would like to make this lazy with stream-map, but stream-map only takes one argument list
              (map (lambda (p s) (match-input p s def-env use-env)) pattern-list syntax-list)))))
         
-  (define (match-input matcher syntax def-env use-env)
-    (match matcher
+  (define (match-input pattern syntax def-env use-env)
+    (match pattern
       [(pattern-identifier id) (hash id syntax)]
       [(literal-identifier id)
        ;should we verify that the input syntax is an identifier here?
        (if (eqv? (env-lookup def-env id) (env-lookup use-env syntax))
            (hash)
-           (pattern-mismatch matcher syntax "Syntax does not match literal identifier or the denotations are different"))]
+           (pattern-mismatch pattern syntax "Syntax does not match literal identifier or the denotations are different"))]
       [(ellipses-list _ sub-patterns ellipses-pattern)
        (split-or-fail 
-        ((input-matcher-source matcher) syntax (length sub-patterns))
+        ((input-pattern-source pattern) syntax (length sub-patterns))
         (fixed-syntax variable-syntax)
         (match-merge-static 
-         (multi-match matcher sub-patterns fixed-syntax (hash) def-env use-env)
+         (multi-match pattern sub-patterns fixed-syntax (hash) def-env use-env)
          (ellipses-match ellipses-pattern variable-syntax def-env use-env)))]
       [(improper-list _ sub-patterns end-pattern)
        (split-or-fail 
-        ((input-matcher-source matcher) syntax (length sub-patterns))
+        ((input-pattern-source pattern) syntax (length sub-patterns))
         (fixed-syntax end-syntax)
         (match-merge-static
          (multi-match 
-          matcher
+          pattern
           sub-patterns
           fixed-syntax
           (hash)
           def-env use-env)
          (match-input end-pattern end-syntax def-env use-env)))]
       [(fixed-list _ sub-patterns) 
-       (multi-match matcher sub-patterns syntax (hash) def-env use-env)]
+       (multi-match pattern sub-patterns syntax (hash) def-env use-env)]
       [(datum datum)
        (if (eqv? datum syntax)
            (hash)
            (pattern-mismatch datum syntax "Syntax does not match literal datum"))]
   ))
   
-  (define (ellipses-match matcher syntax def-env use-env)
+  (define (ellipses-match pattern syntax def-env use-env)
     ;TODO use functional vector instead?
     (define (merge cur-env new-env)
       (for/fold ((env cur-env))
@@ -193,7 +192,7 @@
      (let/ec break
        (for/fold ((cur-env (hash)))
          ((s syntax))
-         (define new-env (match-input matcher s def-env use-env))
+         (define new-env (match-input pattern s def-env use-env))
          (if (pattern-mismatch? new-env)
              (break new-env)
              (merge cur-env new-env))))))
@@ -201,7 +200,7 @@
   (struct syntax-error exn:fail (syntax)
           #:transparent)
   
-  ;this will return a matcher object
+  ;this will return a pattern object
   ;duplicate pattern variable usage will not be detected directly by this function for now.
   ;As an alternative, this function could return both the matcher and the results of computed-ellipses-nesting,
   ;which would also verify no pattern variable duplication for free
@@ -342,18 +341,18 @@
                     (current-continuation-marks) 
                     syntax))]))
       
-  ;Computes how many ellipses apply to each identifier in a matcher object.
+  ;Computes how many ellipses apply to each identifier in a pattern object.
   ;Throws a syntax-error if a duplicate variable use is detected.
   ;This function serves two purposes for now because both purposes involve almost identical work.
-  (define (compute-ellipses-nesting top-matcher)
-    (define (dfs matcher prev-seen ellipses-level)
-      (match matcher
+  (define (compute-ellipses-nesting top-pattern)
+    (define (dfs pattern prev-seen ellipses-level)
+      (match pattern
         [(pattern-identifier id) 
          (if (hash-has-key? prev-seen id)
              (raise (syntax-error 
                      (format "Duplicate identifier '~a' detected in pattern" id)
                      (current-continuation-marks)
-                     (input-matcher-source top-matcher)))
+                     (input-pattern-source top-pattern)))
              (hash-set prev-seen id ellipses-level))]
         [(literal-identifier _) prev-seen]
         [(improper-list syntax sub-patterns end-pattern)
@@ -370,7 +369,7 @@
              (dfs (fixed-list syntax (cdr sub-patterns))
                   (dfs (car sub-patterns) prev-seen ellipses-level) ellipses-level))]
         [(datum _) prev-seen]))
-    (dfs top-matcher (hash) 0))
+    (dfs top-pattern (hash) 0))
   
   ;finds identifiers that aren't pattern identifiers
   (define (find-regular-identifiers template pattern-ids)
@@ -445,7 +444,7 @@
         l)
     (if (or (not (list? l)) (empty? l) (zero? d))
         l
-        (append (flatten2 (first l) (sub1 d)) (flatten2 (rest l) d))))
+        (append (flatten#-v2 (first l) (sub1 d)) (flatten#-v2 (rest l) d))))
         
   ; converts a template struct into a function of the form 
   ; identifier-substitution-map -> syntax.

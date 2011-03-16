@@ -20,18 +20,18 @@
   (for ([m (list m2 m3 m4)])
     (check-match-failure (match-input m syntax (hash) (hash)))))
 
-(let ([matcher (pattern-identifier 'v)]
+(let ([pattern (pattern-identifier 'v)]
       [s1 'v]
       [s2 '(a b c d)]
       [s3 #(bob dole is cool)]
       [s4 #hash( (1 . 2) (3 . 4) (5 . 6))])
   (for ([s (list s1 s2 s3 s4)])
-    (define result (match-input matcher s (hash) (hash)))
+    (define result (match-input pattern s (hash) (hash)))
     (check-match-success result)
-    (check-equal? result (hash (input-matcher-source matcher) s))))
+    (check-equal? result (hash (input-pattern-source pattern) s))))
 
 (let* ([id 'x]
-       [matcher (literal-identifier id)]
+       [pattern (literal-identifier id)]
        [bad-syntaxes (list 'a "b" #\x `(,id) #(x))]
        [empty-env (hash)]
        [env1 (hash id (gensym id))]
@@ -39,39 +39,39 @@
        [id2 'y]
        [diff-env (hash id2 (hash-ref env1 id))])
   (for ([env (list empty-env env1 env2)])
-    (define result (match-input matcher id env env))
+    (define result (match-input pattern id env env))
     (check-match-success result)
     (check-pred hash-empty? result))
   (for ([s bad-syntaxes])
-    (check-match-failure (match-input matcher s empty-env empty-env)))
+    (check-match-failure (match-input pattern s empty-env empty-env)))
   (for ([e1 (list empty-env env1 env2)]
         [e2 (list env1 env2 empty-env)])
-    (check-match-failure (match-input matcher id e1 e2)))
-  (check-match-success (match-input matcher id2 env1 diff-env))
-  (check-match-failure (match-input matcher id env1 diff-env))
-  (check-match-failure (match-input matcher id2 env2 diff-env)))
+    (check-match-failure (match-input pattern id e1 e2)))
+  (check-match-success (match-input pattern id2 env1 diff-env))
+  (check-match-failure (match-input pattern id env1 diff-env))
+  (check-match-failure (match-input pattern id2 env2 diff-env)))
 
 (let* ([syntax '(a b c d e f g)]
        [big-syntax (append syntax '(h))]
        [small-syntax (take syntax (sub1 (length syntax)))]
        [wrong-syntax (map (lambda (s) (if (eqv? s 'd) 'z s)) syntax)]
-       [matcher (fixed-list syntax (map (lambda (s) (datum s)) syntax))])
-  (define good-result (match-input matcher syntax (hash) (hash)))
+       [pattern (fixed-list syntax (map (lambda (s) (datum s)) syntax))])
+  (define good-result (match-input pattern syntax (hash) (hash)))
   (check-match-success good-result)
   (check-pred hash-empty? good-result)
-  (check-match-failure (match-input matcher big-syntax (hash) (hash)))
-  (check-match-failure (match-input matcher wrong-syntax (hash) (hash))))
+  (check-match-failure (match-input pattern big-syntax (hash) (hash)))
+  (check-match-failure (match-input pattern wrong-syntax (hash) (hash))))
 
 (let* ([syntax '((invoke return value) literal (a b))]
        [id1 'x]
        [id2 'y]
        [id3 'z]
-       [matcher (fixed-list '() 
+       [pattern (fixed-list '() 
                             (list (pattern-identifier id1) 
                                   (literal-identifier 'literal)
                                   (fixed-list '() (list (pattern-identifier id2)
                                                         (pattern-identifier id3)))))])
-  (define result (match-input matcher syntax (hash) (hash)))
+  (define result (match-input pattern syntax (hash) (hash)))
   (check-equal? result (hash id1 '(invoke return value) id2 'a id3 'b)))
 
 ;This test is flawed and needs to be fixed. 
@@ -80,7 +80,7 @@
 (let* ([syntax '(a b c (d e (f g h) i) j k)]
        [id1 'x]
        [id2 'y]
-      [matcher (improper-list 
+      [pattern (improper-list 
                 '() 
                 (list (datum 'a) (datum 'b) (pattern-identifier id1))
                 (fixed-list 
@@ -96,46 +96,46 @@
                   (datum 'k))))]
       [too-short '(a b)]
       [too-long (cons 'z syntax)])
-  (define result (match-input matcher syntax (hash) (hash)))
+  (define result (match-input pattern syntax (hash) (hash)))
   (check-equal? result (hash id1 'c id2 '(f g h)))
-  (check-match-failure (match-input matcher too-short (hash) (hash)))
-  (check-match-failure (match-input matcher too-long (hash) (hash)))
-  (check-match-failure (match-input matcher 'weird-syntax (hash) (hash))))
+  (check-match-failure (match-input pattern too-short (hash) (hash)))
+  (check-match-failure (match-input pattern too-long (hash) (hash)))
+  (check-match-failure (match-input pattern 'weird-syntax (hash) (hash))))
 
 (let* ([syntax '(a b c d e f g)]
        [id 'x]
        [id2 'y]
-       [matcher (ellipses-list '() 
+       [pattern (ellipses-list '() 
                                (list (datum 'a) (datum 'b) (pattern-identifier id2)) 
                                (pattern-identifier id))]
        [too-small '(a b c)]
        [really-small '(a)]
        [just-right '(a b c d)])
-  (check-equal? (match-input matcher syntax (hash) (hash)) (hash id '(d e f g) id2 'c))
-  (check-equal? (match-input matcher just-right (hash) (hash)) (hash id '(d) id2 'c))
-  (check-match-failure (match-input matcher too-small (hash) (hash)))
-  (check-match-failure (match-input matcher really-small (hash) (hash)))
-  (check-match-failure (match-input matcher 5 (hash) (hash))))
+  (check-equal? (match-input pattern syntax (hash) (hash)) (hash id '(d e f g) id2 'c))
+  (check-equal? (match-input pattern just-right (hash) (hash)) (hash id '(d) id2 'c))
+  (check-match-failure (match-input pattern too-small (hash) (hash)))
+  (check-match-failure (match-input pattern really-small (hash) (hash)))
+  (check-match-failure (match-input pattern 5 (hash) (hash))))
 
 (let* ([syntax '((a b c) (c d e) (f g h) (i j k) (l m) (n))]
-       [matcher (ellipses-list '() (list) (ellipses-list '() (list) (pattern-identifier 'x)))])
-  (check-equal? (match-input matcher syntax (hash) (hash)) (hash 'x syntax)))
+       [pattern (ellipses-list '() (list) (ellipses-list '() (list) (pattern-identifier 'x)))])
+  (check-equal? (match-input pattern syntax (hash) (hash)) (hash 'x syntax)))
 
 (let*
-    ([matcher (parse-transformer-pattern '(test1 test2 ...) (set))]
-     [ids (compute-ellipses-nesting matcher)])
-  (check-pred ellipses-list? matcher)
-  (check-equal? (ellipses-list-sub-patterns matcher) (list (pattern-identifier 'test1)))
-  (check-equal? (ellipses-list-tail-pattern matcher) (pattern-identifier 'test2))
+    ([pattern (parse-transformer-pattern '(test1 test2 ...) (set))]
+     [ids (compute-ellipses-nesting pattern)])
+  (check-pred ellipses-list? pattern)
+  (check-equal? (ellipses-list-sub-patterns pattern) (list (pattern-identifier 'test1)))
+  (check-equal? (ellipses-list-tail-pattern pattern) (pattern-identifier 'test2))
   (check-equal? ids (hash 'test1 0 'test2 1)))
 
 (let*
-    ([matcher 
+    ([pattern 
       (parse-transformer-pattern 
        '(((((a ...) (b ...) (c ...)) ...) -) ...) (set))]
-     [ids (compute-ellipses-nesting matcher)])
+     [ids (compute-ellipses-nesting pattern)])
   (check-equal? 
-   matcher
+   pattern
    (ellipses-list
     '(((((a ...) (b ...) (c ...)) ...) -) ...) '()
     (fixed-list 
@@ -158,18 +158,18 @@
       (pattern-identifier '-)))) )              
   (check-equal? ids (hash 'a 3 'b 3 'c 3 '- 1)))
 
-(let ([matcher 
+(let ([pattern 
        (parse-transformer-pattern 
         '((((a ...) (b ...)) ...) (d e f g . ((h (i j (k l m (a)))) ...))) (set))])
-  (check-exn syntax-error? (lambda () (compute-ellipses-nesting matcher)))
+  (check-exn syntax-error? (lambda () (compute-ellipses-nesting pattern)))
   )
 
-(let* ([matcher
+(let* ([pattern
         (parse-transformer-pattern
          '(a b |.| (d #t 5 "bob" #\c e)) (set 'd 'e))]
-       [ids (compute-ellipses-nesting matcher)])
+       [ids (compute-ellipses-nesting pattern)])
   (check-equal?
-   matcher
+   pattern
    (improper-list
     '(a b |.| (d #t 5 "bob" #\c e))
     (list
@@ -233,12 +233,12 @@
         (template-identifier 'nested))))
      (template-identifier 'lists)))))
 
-(let* ([matcher
+(let* ([pattern
         (parse-transformer-pattern
          '((a ...) b) (set))]
-       [matcher-nesting 
-        (compute-ellipses-nesting matcher)]
-       [pattern-ids (apply set (hash-keys matcher-nesting))]
+       [pattern-nesting 
+        (compute-ellipses-nesting pattern)]
+       [pattern-ids (apply set (hash-keys pattern-nesting))]
        [template1
         (parse-transformer-template
          '(a ...) pattern-ids (hash))]
@@ -256,11 +256,11 @@
         '(a (a ...) b) pattern-ids (hash))])
   #t
   (for ([template (list template1 template2 template3)])
-    (verify-template-ellipses-nesting template matcher-nesting))
+    (verify-template-ellipses-nesting template pattern-nesting))
   (for ([template (list bad-template1 bad-template2)])
     (check-exn syntax-error? 
                (lambda () 
-                 (verify-template-ellipses-nesting template matcher-nesting)))))
+                 (verify-template-ellipses-nesting template pattern-nesting)))))
 
 (let* ([bad-syntax
         '(5 ...)]
