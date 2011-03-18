@@ -128,54 +128,69 @@
             result1 
             (match-merge-static-helper result1 expr-rest ...)))]))
   
-  ;matches all values in pattern-list against all syntax elements of syntax-list. Both should
-  ; be lists of the same size
-  (define (multi-match parent-pattern pattern-list syntax-list init-value def-env use-env)
+  ;matches all values in pattern-list against all syntax elements of syntax-list. 
+  ;Both should be lists of the same size.
+  (define (multi-match parent-pattern matcher-list syntax-list init-value use-env)
     (if (not (list? syntax-list))
         (pattern-mismatch parent-pattern syntax-list "syntax not a list")
-        (if (not (eqv? (length pattern-list) (length syntax-list)))
+        (if (not (eqv? (length matcher-list) (length syntax-list)))
             (pattern-mismatch (input-pattern-source parent-pattern) syntax-list 
-                              (format "arity mismatch\n  pattern:~a\n  syntax:~a" pattern-list syntax-list))
+                              (format "arity mismatch\n  pattern:~a\n  syntax:~a" parent-pattern syntax-list))
             (merge-match-results
              ;I would like to make this lazy with stream-map, but stream-map only takes one argument list
-             (map (lambda (p s) (match-input p s def-env use-env)) pattern-list syntax-list)))))
-        
-  (define (match-input pattern syntax def-env use-env)
+             (map (lambda (m s) (m s use-env)) matcher-list syntax-list)))))        
+  
+  (define (make-matcher pattern def-env)
     (match pattern
-      [(pattern-identifier id) (hash id syntax)]
+      [(pattern-identifier id) (lambda (syntax ignored) (hash id syntax))]
       [(literal-identifier id)
        ;should we verify that the input syntax is an identifier here?
-       (if (eqv? (env-lookup def-env id) (env-lookup use-env syntax))
-           (hash)
-           (pattern-mismatch pattern syntax "Syntax does not match literal identifier or the denotations are different"))]
+       (lambda (syntax use-env)
+         (if (eqv? (env-lookup def-env id) (env-lookup use-env syntax))
+             (hash)
+             (pattern-mismatch pattern syntax 
+                               "Syntax does not match literal identifier or the denotations are different")))]
+      ;TODO reimplement ellipses to be the same as with templates
+      ;Instead of having an ellipses-list, have an ellipses pattern
       [(ellipses-list _ sub-patterns ellipses-pattern)
-       (split-or-fail 
+       (define sub-matchers 
+         (map (lambda (p) (make-matcher p def-env)) sub-patterns))
+       (define ellipses-matcher (make-matcher ellipses-pattern def-env))
+       (lambda (syntax use-env)
+         (split-or-fail 
         ((input-pattern-source pattern) syntax (length sub-patterns))
         (fixed-syntax variable-syntax)
         (match-merge-static 
-         (multi-match pattern sub-patterns fixed-syntax (hash) def-env use-env)
-         (ellipses-match ellipses-pattern variable-syntax def-env use-env)))]
+         (merge-match-results
+          ;TODO make lazy?
+          (map (lambda (m s) (m s use-env)) sub-matchers fixed-syntax))
+         (ellipses-match ellipses-matcher variable-syntax use-env)))
+       )]
       [(improper-list _ sub-patterns end-pattern)
-       (split-or-fail 
-        ((input-pattern-source pattern) syntax (length sub-patterns))
-        (fixed-syntax end-syntax)
-        (match-merge-static
-         (multi-match 
-          pattern
-          sub-patterns
-          fixed-syntax
-          (hash)
-          def-env use-env)
-         (match-input end-pattern end-syntax def-env use-env)))]
+       (define sub-matchers 
+         (map (lambda (p) (make-matcher p def-env)) sub-patterns))
+       (define tail-matcher (make-matcher end-pattern def-env))
+       (lambda (syntax use-env)
+         (split-or-fail 
+          ((input-pattern-source pattern) syntax (length sub-patterns))
+          (fixed-syntax end-syntax)
+          (match-merge-static
+           (merge-match-results
+            ;TODO make lazy?
+            (map (lambda (m s) (m s use-env)) sub-matchers fixed-syntax))
+           (tail-matcher end-syntax use-env))))]
       [(fixed-list _ sub-patterns) 
-       (multi-match pattern sub-patterns syntax (hash) def-env use-env)]
+       (define sub-matchers 
+         (map (lambda (p) (make-matcher p def-env)) sub-patterns))
+       (lambda (syntax use-env)
+         (multi-match pattern sub-matchers syntax (hash) use-env))]
       [(datum datum)
-       (if (eqv? datum syntax)
-           (hash)
-           (pattern-mismatch datum syntax "Syntax does not match literal datum"))]
-  ))
+       (lambda (syntax ignored)
+         (if (eqv? datum syntax)
+             (hash)
+             (pattern-mismatch datum syntax "Syntax does not match literal datum")))]))
   
-  (define (ellipses-match pattern syntax def-env use-env)
+  (define (ellipses-match matcher syntax use-env)
     ;TODO use functional vector instead?
     (define (merge cur-env new-env)
       (for/fold ((env cur-env))
@@ -192,7 +207,7 @@
      (let/ec break
        (for/fold ((cur-env (hash)))
          ((s syntax))
-         (define new-env (match-input pattern s def-env use-env))
+         (define new-env (matcher s use-env))
          (if (pattern-mismatch? new-env)
              (break new-env)
              (merge cur-env new-env))))))
