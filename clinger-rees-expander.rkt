@@ -1,11 +1,7 @@
 (module clinger-rees-expander racket
   (provide (all-defined-out))
   
-  ; matcher returns a pattern-env or #f if matching fails.
-  ; ellipses env gives the number of ellipses affecting each identifier in the pattern
-  (struct pattern-matcher (matcher ellipses-env)
-          #:transparent)
-  
+  (struct syntax-rule (matcher rewriter regular-ids def-env))  
   ;def-env is the environment at the time of definition
     ;it needs to be combined with the pattern env and the rewrite-env
   ;id-set is the set of all identifiers that appear in an output pattern that are not pattern variables
@@ -387,7 +383,7 @@
     (dfs top-pattern (hash) 0))
   
   ;finds identifiers that aren't pattern identifiers
-  (define (find-regular-identifiers template pattern-ids)
+  (define (find-regular-ids template pattern-ids)
     (define (dfs t result)
       (match t
         [(template-identifier id)
@@ -505,6 +501,101 @@
         (lambda (sub-map) (tail-rewriter sub-map)))]
       [(template-datum d) 
        (lambda (ignored) d)]))
-        
-    )
+  
+  ;Parses a pattern/template pair under an environment and literal id list
+  ; (syntax, syntax, hash-table, set) -> rule
+  (define (parse-syntax-rule pattern-syntax template-syntax def-env literal-ids)
+    #;(display "==================\n")
+    #;(printf "  pattern=~a\n" pattern-syntax)
+    #;(printf "  template=~a\n" template-syntax)
+    (define pattern (parse-transformer-pattern pattern-syntax literal-ids))
+    (define ellipses-nesting (compute-ellipses-nesting pattern))
+    (define pattern-ids(apply set (hash-keys ellipses-nesting)))
+    (define template (parse-transformer-template 
+                      template-syntax
+                      pattern-ids 
+                      def-env))
+    (verify-template-ellipses-nesting template ellipses-nesting)
+    (syntax-rule 
+     (make-matcher pattern def-env)
+     (make-rewriter template)
+     (find-regular-ids template pattern-ids)
+     def-env))
+  
+  ;Parses a syntax-rules expression into a list of rules
+  ;(syntax, hash-table) -> list[rule]
+  (define (parse-syntax-rules syntax def-env)
+    (define (parse-literals syntax)
+      (when (not (list? syntax))
+        (error (format "Expected a syntax-rules literals list, got a non-list value ~a" syntax)))
+      (for/fold ((result (set)))
+        ((lit syntax))
+        (when (not (symbol? lit))
+          (error (format "non-symbol value inside of syntax-rules literals list: ~a" lit)))
+        (when (set-member? result lit)
+          (error (format "literals list contains a duplicate of identifier ~a" lit)))
+        (set-add result lit)))
+    (define (parse-pattern/template-pairs syntax literal-ids)
+      (when (not (list? syntax))
+        (error (format 
+                "malformed syntax-rules syntax. Got a non-list value for the list of pattern-template pairs: ~a" 
+                syntax)))
+      (for/list ([s syntax])
+        (when (not (list? s))
+          (error (format "Expected a list containing a pattern and template, got a non-list value: ~a" syntax)))
+        (when (not (eqv? 2 (length s)))
+          (error (format "pattern and template list is not of length 2: ~a" s)))
+        (when (not (list? (car s)))
+          (error (format "syntax-rules pattern must be a list: ~a" s)))
+        (when (empty? (car s))
+          (error (format "syntax-rules pattern must be nonempty: ~a" s)))
+        (when (not (symbol? (caar s)))
+          (error (format "syntax-rules pattern must begin with an identifier: ~a" s)))
+        (parse-syntax-rule (cdar s) (cadr s) def-env literal-ids)))
+    (when (or (null? syntax)
+            (null? (cdr syntax))
+            (not (list? (cddr syntax))))
+        (error "syntax-rules must contain at least a literals list"))
+    (when (not (eqv? (car syntax) 'syntax-rules))
+        (error "the first identifier of syntax-rules syntax must be the symbol 'syntax-rules"))
+    (define literals (parse-literals (cadr syntax)))
+    (define rules (parse-pattern/template-pairs (cddr syntax) literals))
+    rules)
+
+  ;Converts a list of rules into a single macro transformer function
+  ; (list[rule]) -> (syntax, hash-table) -> (syntax, hash-table)
+  (define (make-macro-transformer syntax-rules)
+    ;assume that syntax-rules is a non-empty list of syntax-rule structs.
+    ;Do we need to handle the case where no rules are provided?
+    ;The racket documentation suggests we do. What does it mean to have no rules?
+    (define (rewrite rule syntax use-env pattern-env)
+      (match-define (syntax-rule matcher rewriter regular-ids def-env) rule)
+      (define fresh-regular-env 
+        (for/hash ([id regular-ids])
+          (values id (gensym id))))
+      (define macro-env (merge-envs fresh-regular-env pattern-env)) 
+      (define new-use-env
+        (for/fold ((result use-env))
+          ((id regular-ids))
+          (define cur-binding (hash-ref def-env id (void)))
+          (if (void? cur-binding)
+              result
+              (hash-set result id cur-binding))))
+      (define new-syntax (rewriter macro-env))
+      (values new-syntax new-use-env))
+    (if (null? syntax-rules)
+        (lambda (syntax) (error "no rules provided, which means the macro invocation always fails"))
+        (lambda (syntax use-env)
+          (let loop 
+            ((match-failures '())
+             (rem-rules syntax-rules))
+            (if (empty? rem-rules)
+                (error "match failed: ~a" (reverse match-failures))
+                (let* ([rule (car rem-rules)]
+                       [match ((syntax-rule-matcher rule) (cdr syntax) use-env)])
+                  (if (pattern-mismatch? match)
+                      (loop (cons match match-failures)
+                            (cdr rem-rules))
+                      (rewrite rule syntax use-env match)))))))) 
+  )
      

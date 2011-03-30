@@ -367,7 +367,7 @@
       (parse-transformer-template
        '((a ...) ((b c (d ...)) ...) . (e f g ('h "i" (#\k)) 'l))
        pattern-ids (hash))]
-     [reg-ids (find-regular-identifiers template pattern-ids)]
+     [reg-ids (find-regular-ids template pattern-ids)]
      [rewriter (make-rewriter template)]
      [sub-map 
       (hash 
@@ -385,3 +385,39 @@
    (rewriter sub-map)
    '((1 2 3) ((4 7 (10 11 12)) (5 8 (13 14 15)) (6 9 (16 17 18))) . 
              (e.1 f.1 g.1 (h "i" (#\k)) l))))
+
+(define (string-prefix? string prefix)
+  (define end (string-length prefix))
+  (if (< (string-length string) end)
+      #f
+      (let loop ([idx 0])
+        (cond 
+          [(>= idx end) #t]
+          [(not (eqv? (string-ref string idx) (string-ref prefix idx))) #f]
+          [else (loop (add1 idx))]))))
+
+(define (sym-matcher prefix-sym)
+  (define prefix (symbol->string prefix-sym))
+  (lambda (sym)
+    (string-prefix? (symbol->string sym) prefix)))
+
+(let*-values 
+    ([(rules) (parse-syntax-rules 
+               '(syntax-rules ()
+                  ((and) #t)
+                  ((and test) test)
+                  ((and test1 test2 ...)
+                   (if test1 (and test2 ...) #f))) (hash))]
+     
+     [(macro) (make-macro-transformer rules)]
+     [(env) (hash 'and 'and 'if 'if)]
+     [(r1 e1) (macro '(and) env)]
+     [(r2 e2) (macro '(and "bob") env)]
+     [(r3 e3) (macro '(and #f #t) env)])
+  (check-equal? #t r1)
+  (check-equal? "bob" r2)
+  (check-not-exn
+   (lambda ()
+     (match r3
+       [(list (? (sym-matcher 'if)) #f (list (? (sym-matcher 'and)) #t) #f)
+        #t]))))

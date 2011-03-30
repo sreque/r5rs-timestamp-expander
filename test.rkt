@@ -72,3 +72,7 @@
     [(_ a a) a]))
 
 #;(dup-ids 1 1)
+
+(define-syntax test-no-rules
+  (syntax-rules ()))
+(test-no-rules)
