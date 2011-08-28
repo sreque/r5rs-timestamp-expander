@@ -75,4 +75,11 @@
 
 (define-syntax test-no-rules
   (syntax-rules ()))
-(test-no-rules)
+#;(test-no-rules)
+
+(define b "b")
+(define-syntax quote-test
+  (syntax-rules ()
+    [(_ a)
+     (list a 'a 'b b)]))
+(quote-test (list 1 2 3))
