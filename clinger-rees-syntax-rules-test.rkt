@@ -432,6 +432,23 @@
   (lambda (sym)
     (string-prefix? (symbol->string sym) prefix)))
 
+(define (invert-hash the-hash)
+  (for/hash ([(k v) the-hash])
+    (values v k)))
+
+(define (hash-length the-hash)
+  (define size 0)
+  (hash-for-each 
+   the-hash
+  (λ (k v) (set! size (add1 size))))
+  size)
+
+(define (check-quote-env env symbols)
+  (define env-reversed (invert-hash env))
+  (for ([sym symbols])
+        (check-pred (sym-matcher sym) (hash-ref env-reversed sym)))
+  (check-equal? (length symbols) (hash-length env)))
+
 ;simple test of the 'and' macro, which showcases the fact that I don't yet have the ability to parse recursive macros
 (let*-values 
     ([(rules) (parse-syntax-rules 
@@ -443,16 +460,21 @@
      
      [(macro) (make-macro-transformer rules)]
      [(env) (hash 'and 'and 'if 'if)]
-     [(r1 e1) (macro '(and) env)]
-     [(r2 e2) (macro '(and "bob") env)]
-     [(r3 e3) (macro '(and #f #t) env)])
+     [(qenv) (hash)]
+     [(r1 e1 qe1) (macro '(and) env qenv)]
+     [(r2 e2 qe2) (macro '(and "bob") env qenv)]
+     [(r3 e3 qe3) (macro '(and #f #t) env qenv)]
+     [(qe3-rev) (invert-hash qe3)])
   (check-equal? #t r1)
   (check-equal? "bob" r2)
   (check-not-exn
    (lambda ()
      (match r3
        [(list (? (sym-matcher 'if)) #f (list (? (sym-matcher 'and)) #t) #f)
-        #t]))))
+        #t])))
+  (check-equal? qe1 qenv)
+  (check-equal? qe2 qenv)
+  (check-quote-env qe3 '(if and)))
 
 ;test to show that we are handling quote forms properly by not treating them specially, since we don't know the exact binding of each quote identifier yet
 (let*-values
@@ -461,8 +483,9 @@
                   [(who-cares a) (list a 'a)]) (hash))]
      [(macro) (make-macro-transformer rules)]
      [(env) (hash)]
-     [(r1 e1) (macro '(imagine-this-keyword-is-bound-to-the-macro (list 1 2 3)) (hash))])
+     [(r1 e1 qe1) (macro '(imagine-this-keyword-is-bound-to-the-macro (list 1 2 3)) (hash) (hash))])
   (check-not-exn
    (lambda ()
      (match r1
-     [(list (? (sym-matcher 'list)) (list 'list 1 2 3) (list (? (sym-matcher 'quote)) (list 'list 1 2 3))) #t]))))
+     [(list (? (sym-matcher 'list)) (list 'list 1 2 3) (list (? (sym-matcher 'quote)) (list 'list 1 2 3))) #t])))
+  (check-quote-env qe1 '(quote list)))

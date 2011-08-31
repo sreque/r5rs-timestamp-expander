@@ -559,12 +559,12 @@
     rules)
 
   ;Converts a list of rules into a single macro transformer function
-  ; (list[rule]) -> (syntax, hash-table) -> (syntax, hash-table)
+  ; (list[rule]) -> (syntax, hash-table, hash-table) -> (syntax, hash-table, hash-table)
+  ;hash-table no. 1 represents the environment at the time of macro use
+  ;hash-table no. 2 represents a mapping from re-written symbols to their original value
   (define (make-macro-transformer syntax-rules)
-    ;assume that syntax-rules is a non-empty list of syntax-rule structs.
-    ;Do we need to handle the case where no rules are provided?
-    ;The racket documentation suggests we do. What does it mean to have no rules?
-    (define (rewrite rule syntax use-env pattern-env)
+    ;assume at this point that syntax-rules is a non-empty list of syntax-rule structs.
+    (define (rewrite rule syntax use-env pattern-env orig-sym-env)
       (match-define (syntax-rule matcher rewriter regular-ids def-env) rule)
       (define fresh-regular-env 
         (for/hash ([id regular-ids])
@@ -574,14 +574,18 @@
         (for/fold ((result use-env))
           ((id regular-ids))
           (define cur-binding (hash-ref def-env id (void)))
-          (if (void? cur-binding)
+          (if (void? cur-binding);why would we ever be void?
               result
               (hash-set result id cur-binding))))
+      (define new-orig-sym-env
+        (for/fold ([result orig-sym-env])
+          ((id regular-ids))
+          (hash-set result (hash-ref fresh-regular-env id) id)))
       (define new-syntax (rewriter macro-env))
-      (values new-syntax new-use-env))
+      (values new-syntax new-use-env new-orig-sym-env))
     (if (null? syntax-rules)
         (lambda (syntax) (error "no rules provided, which means the macro invocation always fails"))
-        (lambda (syntax use-env)
+        (lambda (syntax use-env orig-sym-env)
           (let loop 
             ((match-failures '())
              (rem-rules syntax-rules))
@@ -592,6 +596,6 @@
                   (if (pattern-mismatch? match)
                       (loop (cons match match-failures)
                             (cdr rem-rules))
-                      (rewrite rule syntax use-env match)))))))) 
+                      (rewrite rule syntax use-env match orig-sym-env)))))))) 
   )
      
