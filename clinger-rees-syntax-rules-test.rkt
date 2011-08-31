@@ -9,8 +9,9 @@
 
 (define hash-empty? (compose not hash-iterate-first))
 
+;test matching of various pattern data (characters, booleans, numbers, strings)
 (let* ([syntax 'a]
-      [p1 (datum 'a)]
+      [p1 (datum 'a)] ;really symbols shouldn't be supported
       [p2 (datum "a")]
       [p3 (datum #\a)]
       [p4 (fixed-list '() (list (datum syntax)))])
@@ -20,6 +21,7 @@
   (for ([p (list p2 p3 p4)])
     (check-match-failure ((make-matcher p (hash)) syntax (hash)))))
 
+;test pattern identifier's resulting matcher matching different kinds of syntax.
 (let ([pattern (pattern-identifier 'v)]
       [s1 'v]
       [s2 '(a b c d)]
@@ -30,6 +32,7 @@
     (check-match-success result)
     (check-equal? result (hash (input-pattern-source pattern) s))))
 
+;test matching of a  literal identifier based on the environment
 (let* ([id 'x]
        [pattern (literal-identifier id)]
        [bad-syntaxes (list 'a "b" #\x `(,id) #(x))]
@@ -51,6 +54,7 @@
   (check-match-failure ((make-matcher pattern env1) id diff-env))
   (check-match-failure ((make-matcher pattern env2) id2 diff-env)))
 
+;test matching of fixed list against syntax lists of the same and different sizes and with different contents
 (let* ([syntax '(a b c d e f g)]
        [big-syntax (append syntax '(h))]
        [small-syntax (take syntax (sub1 (length syntax)))]
@@ -63,6 +67,7 @@
   (check-match-failure (matcher big-syntax (hash)))
   (check-match-failure (matcher wrong-syntax (hash))))
 
+;check matching against nested fixed lists
 (let* ([syntax '((invoke return value) literal (a b))]
        [id1 'x]
        [id2 'y]
@@ -75,9 +80,8 @@
   (define result ((make-matcher pattern (hash)) syntax (hash)))
   (check-equal? result (hash id1 '(invoke return value) id2 'a id3 'b)))
 
-;This test is flawed and needs to be fixed. 
+;This test is flawed and needs to be changed or removed. 
 ;datum should not be used to match symbols. 
-;They should be used to match lists of the form (quote symbol)
 (let* ([syntax '(a b c (d e (f g h) i) j k)]
        [id1 'x]
        [id2 'y]
@@ -104,6 +108,7 @@
   (check-match-failure (matcher too-long (hash)))
   (check-match-failure (matcher 'weird-syntax (hash))))
 
+;test matching of ellipses list against lists of varying length
 (let* ([syntax '(a b c d e f g)]
        [id 'x]
        [id2 'y]
@@ -120,10 +125,12 @@
   (check-match-failure (matcher really-small))
   (check-match-failure (matcher 5)))
 
+;test matching of a ((x ...) ...) against a nested list
 (let* ([syntax '((a b c) (c d e) (f g h) (i j k) (l m) (n))]
        [pattern (ellipses-list '() (list) (ellipses-list '() (list) (pattern-identifier 'x)))])
   (check-equal? ((make-matcher pattern (hash)) syntax (hash)) (hash 'x syntax)))
 
+;test parsing of an ellipses list and resulting matcher.
 (let*
     ([pattern (parse-transformer-pattern '(test1 test2 ...) (set))]
      [ids (compute-ellipses-nesting pattern)])
@@ -132,6 +139,7 @@
   (check-equal? (ellipses-list-tail-pattern pattern) (pattern-identifier 'test2))
   (check-equal? ids (hash 'test1 0 'test2 1)))
 
+;test parsing of 3-level deep ellipses pattern and resulting matcher
 (let*
     ([pattern 
       (parse-transformer-pattern 
@@ -161,12 +169,14 @@
       (pattern-identifier '-)))) )              
   (check-equal? ids (hash 'a 3 'b 3 'c 3 '- 1)))
 
+;checks that duplicate ids lead to syntax error
 (let ([pattern 
        (parse-transformer-pattern 
         '((((a ...) (b ...)) ...) (d e f g . ((h (i j (k l m (a)))) ...))) (set))])
   (check-exn syntax-error? (lambda () (compute-ellipses-nesting pattern)))
   )
 
+;basic ellipses nesting test
 (let* ([pattern
         (parse-transformer-pattern
          '(a b |.| (d #t 5 "bob" #\c e)) (set 'd 'e))]
@@ -189,6 +199,8 @@
       (literal-identifier 'e)))))
   (check-equal? ids (hash 'a 0 'b 0)))
 
+
+;test parsing of ellipses template
 (let*
     ([template
       (parse-transformer-template
@@ -208,6 +220,7 @@
         1
         (set 'a))))))))
 
+;test improper-template-list parsing
 (let* ([template 
         (parse-transformer-template
          '(a ... ... #f "c" #\5 6 |.| ((very nested) |.| lists))
@@ -236,6 +249,9 @@
         (template-identifier 'nested))))
      (template-identifier 'lists)))))
 
+;test combination of an ellipses matcher and template to match syntax and then output it
+;tests when an identifier appears in multiple positions in a template with different ellipses nestings
+;tests when the ellipses nesting between matcher and template don't match
 (let* ([pattern
         (parse-transformer-pattern
          '((a ...) b) (set))]
@@ -264,6 +280,9 @@
                (lambda () 
                  (verify-template-ellipses-nesting template pattern-nesting)))))
 
+;is this two tests in one?
+;the first test checks that an error is thrown if there is no identifier in an ellipses template
+;the second, tests that we can find an identifier deep inside of an ellipses list
 (let* ([bad-syntax
         '(5 ...)]
        [really-nested-identifier-syntax
@@ -272,6 +291,9 @@
   (parse-transformer-template really-nested-identifier-syntax (set 'a))
   #t)
 
+
+;tests that verify-template-ellipses-nesting works correctly with 
+; varying ways of nesting an identifier in multiple ellipses in a template
 (let* ([pattern
          (parse-transformer-pattern
           '((((a ...) ...)) ...) (set))]
@@ -303,6 +325,7 @@
                 (lambda () 
                   (verify-template-ellipses-nesting t nesting)))))
 
+;test flatten#
 (let* ([3-level 
         '(
           ((a b c) (d e f)) 
@@ -315,6 +338,7 @@
    (flatten# 3-level 2)
    '(a b c d e f g h i j k l m n o p q r s t u)))
 
+;more complex flatten# test
 (let ([4-level
         '(
           (
@@ -360,6 +384,9 @@
   (check-exn exn:fail:contract?
                (lambda () (flatten# 4-level 4))))
                   
+;tests find-regular-ids, make-rewriter. 
+;Basically a template is created and used to make a macro.
+;That macro is then invoked and its resulting syntax is checked.
 (let* 
     ([pattern-ids (set 'a 'b 'c 'd)]
      [template
@@ -388,6 +415,7 @@
    '((1 2 3) ((4 7 (10 11 12)) (5 8 (13 14 15)) (6 9 (16 17 18))) . 
              (e.1 f.1 g.1 ((quote.1 h.1) "i" (#\k)) (quote.1 l.1)))))
 
+;Helper function to check that an identifier was generated from some base identifier
 (define (string-prefix? string prefix)
   (define end (string-length prefix))
   (if (< (string-length string) end)
@@ -398,11 +426,13 @@
           [(not (eqv? (string-ref string idx) (string-ref prefix idx))) #f]
           [else (loop (add1 idx))]))))
 
+;curries the second argument of string-prefix? with (symbol->string prefix-sym)
 (define (sym-matcher prefix-sym)
   (define prefix (symbol->string prefix-sym))
   (lambda (sym)
     (string-prefix? (symbol->string sym) prefix)))
 
+;simple test of the 'and' macro, which showcases the fact that I don't yet have the ability to parse recursive macros
 (let*-values 
     ([(rules) (parse-syntax-rules 
                '(syntax-rules ()
@@ -424,6 +454,7 @@
        [(list (? (sym-matcher 'if)) #f (list (? (sym-matcher 'and)) #t) #f)
         #t]))))
 
+;test to show that we are handling quote forms properly by not treating them specially, since we don't know the exact binding of each quote identifier yet
 (let*-values
     ([(rules) (parse-syntax-rules
                '(syntax-rules ()
