@@ -1,14 +1,23 @@
 (module clinger-rees-expander racket
   (provide (all-defined-out))
   
+  (define-syntax raise-syntax-error#
+    (syntax-rules ()
+      [(_ syntax msg)
+       (raise
+        (syntax-error
+         msg
+         (current-continuation-marks)
+         syntax))]))
+  
   (struct syntax-rule (matcher rewriter regular-ids def-env))  
   ;def-env is the environment at the time of definition
-    ;it needs to be combined with the pattern env and the rewrite-env
+  ;it needs to be combined with the pattern env and the rewrite-env
   ;id-set is the set of all identifiers that appear in an output pattern that are not pattern variables
-    ;used to create rewrite-env
-    ;all identifiers have to be rewritten, whether they are free or bound, because they may be rebound by the macro
+  ;used to create rewrite-env
+  ;all identifiers have to be rewritten, whether they are free or bound, because they may be rebound by the macro
   (struct output-generator (generator def-env id-set ellipses-env) 
-          #:transparent)
+    #:transparent)
   
   ;Should we create a separate data type for environments to restrict operations on them?
   (define (env-lookup env id)
@@ -18,14 +27,14 @@
     (for/fold ((result env1))
       (((k v) env2))
       (hash-set result k v)))
-
+  
   (define (merge-match-results seq)
     (let/ec break
       (for/fold ((cur-env (hash)))
-         ((result seq))
-         (if (pattern-mismatch? result)
-             (break result)
-             (merge-envs cur-env result)))))
+        ((result seq))
+        (if (pattern-mismatch? result)
+            (break result)
+            (merge-envs cur-env result)))))
   
   ;foldl that requires the input lists to all be the same size
   ;this is not currently used
@@ -41,7 +50,7 @@
           (begin
             (for ([v lists])
               (when (not (eqv? v '()))
-                  (raise (error "lists of differing size"))))
+                (raise (error "lists of differing size"))))
             cur-value)
           (invoke-loop cur-value lists)))
     (invoke-loop init lists))
@@ -77,10 +86,10 @@
     (make-template-struct improper-template-list sub-templates tail-template)
     ;make template vector
     (make-template-struct template-datum))
-     
+  
   (struct pattern-mismatch (pattern syntax msg)
-          #:transparent)
-
+    #:transparent)
+  
   ;attempts to split a list. On failure, returns a pattern mismatch object
   ;On success, binds two passed-in identifiers to the split values and 
   ;invokes the passed in expressions, which should return either an environment
@@ -119,10 +128,10 @@
       [(_ expr1) expr1]
       [(_ expr1 expr-rest ...)
        (let ([result1 expr1])
-           (if 
-            (pattern-mismatch? result1) 
-            result1 
-            (match-merge-static-helper result1 expr-rest ...)))]))
+         (if 
+          (pattern-mismatch? result1) 
+          result1 
+          (match-merge-static-helper result1 expr-rest ...)))]))
   
   ;matches all values in pattern-list against all syntax elements of syntax-list. 
   ;Both should be lists of the same size.
@@ -154,14 +163,14 @@
        (define ellipses-matcher (make-matcher ellipses-pattern def-env))
        (lambda (syntax use-env)
          (split-or-fail 
-        ((input-pattern-source pattern) syntax (length sub-patterns))
-        (fixed-syntax variable-syntax)
-        (match-merge-static 
-         (merge-match-results
-          ;TODO make lazy?
-          (map (lambda (m s) (m s use-env)) sub-matchers fixed-syntax))
-         (ellipses-match ellipses-matcher variable-syntax use-env)))
-       )]
+          ((input-pattern-source pattern) syntax (length sub-patterns))
+          (fixed-syntax variable-syntax)
+          (match-merge-static 
+           (merge-match-results
+            ;TODO make lazy?
+            (map (lambda (m s) (m s use-env)) sub-matchers fixed-syntax))
+           (ellipses-match ellipses-matcher variable-syntax use-env)))
+         )]
       [(improper-list _ sub-patterns end-pattern)
        (define sub-matchers 
          (map (lambda (p) (make-matcher p def-env)) sub-patterns))
@@ -209,7 +218,7 @@
              (merge cur-env new-env))))))
   
   (struct syntax-error exn:fail (syntax)
-          #:transparent)
+    #:transparent)
   
   ;this will return a pattern object
   ;duplicate pattern variable usage will not be detected directly by this function for now.
@@ -224,14 +233,14 @@
             (case first
               ['... 
                (if (not (empty? rest))
-                   (raise (syntax-error "ellipses must occur at the end of a syntax list"
-                                        (current-continuation-marks)
-                                        syntax))
+                   (raise-syntax-error#
+                    syntax
+                    "ellipses must occur at the end of a syntax list")
                    (if (empty? parsed-stack)
                        (raise (syntax-error 
                                "ellipses must occur after a pattern inside of a syntax list"
-                              (current-continuation-marks)
-                              syntax))
+                               (current-continuation-marks)
+                               syntax))
                        (ellipses-list syntax (reverse (cdr parsed-stack)) (car parsed-stack))))]
               ['|.|
                (if (or (empty? rest) (not (empty? (cdr rest))))
@@ -266,7 +275,7 @@
   
   ;we only use env to know if quote has been redefined or not.
   (define (parse-transformer-template syntax pattern-ids)
-
+    
     (define (find-pattern-ids template)
       (define result
         (let loop ([t template]
@@ -288,11 +297,11 @@
       (if (set-empty? result)
           (raise (syntax-error 
                   "Pattern preceding an ellipses  must contain at least one identifier"
-                (current-continuation-marks)
-                (output-template-source template)))
+                  (current-continuation-marks)
+                  (output-template-source template)))
           result))
     (define (parse-list parsed-stack remaining-list)
-     #;(printf "  parse-list: ~a ~a\n" parsed-stack remaining-list)
+      #;(printf "  parse-list: ~a ~a\n" parsed-stack remaining-list)
       (if (empty? remaining-list)
           (template-list syntax (reverse parsed-stack))
           (let ([first (car remaining-list)]
@@ -302,26 +311,26 @@
                (if (empty? parsed-stack)
                    (begin
                      (printf "first=~a rest=~a\n" first rest)
-                       (raise (syntax-error 
-                               "ellipses must occur after a pattern inside of a syntax list"
-                              (current-continuation-marks)
-                              syntax)))
-                       (let ([top-parsed (car parsed-stack)])
-                         (parse-list 
-                          (cons 
-                           (if (ellipses-template? top-parsed)
-                               (ellipses-template 
-                                (output-template-source top-parsed)
-                                (ellipses-template-inner-template top-parsed)
-                                (add1 (ellipses-template-num-ellipses top-parsed))
-                                (ellipses-template-pattern-ids top-parsed))
-                               (ellipses-template 
-                                (output-template-source top-parsed)
-                                top-parsed
-                                1
-                                (find-pattern-ids top-parsed)))
-                           (cdr parsed-stack)) 
-                          rest)))]
+                     (raise (syntax-error 
+                             "ellipses must occur after a pattern inside of a syntax list"
+                             (current-continuation-marks)
+                             syntax)))
+                   (let ([top-parsed (car parsed-stack)])
+                     (parse-list 
+                      (cons 
+                       (if (ellipses-template? top-parsed)
+                           (ellipses-template 
+                            (output-template-source top-parsed)
+                            (ellipses-template-inner-template top-parsed)
+                            (add1 (ellipses-template-num-ellipses top-parsed))
+                            (ellipses-template-pattern-ids top-parsed))
+                           (ellipses-template 
+                            (output-template-source top-parsed)
+                            top-parsed
+                            1
+                            (find-pattern-ids top-parsed)))
+                       (cdr parsed-stack)) 
+                      rest)))]
               [(|.|)
                (if (or (empty? rest) (not (empty? (cdr rest))))
                    (raise (syntax-error
@@ -348,7 +357,7 @@
                     (format "Unrecognized type for syntax: ~a" syntax) 
                     (current-continuation-marks) 
                     syntax))]))
-      
+  
   ;Computes how many ellipses apply to each identifier in a pattern object.
   ;Throws a syntax-error if a duplicate variable use is detected.
   ;This function serves two purposes for now because both purposes involve almost identical work.
@@ -396,7 +405,7 @@
          (for/fold ((r (dfs tail result))) ((t ts)) (dfs t r))]
         [(template-datum _) result]))
     (dfs template (set)))
-
+  
   (define (verify-template-ellipses-nesting top-template expected-nestings)
     (define (dfs template ellipses-level)
       (match template
@@ -443,17 +452,17 @@
     (if (or (null? lst) (<= depth 0))
         lst
         (body (lambda () '()) lst depth)))
-                  
+  
   ;This version is simpler but I think it has a worse
   ;asymptotic complexity than above.
   (define (flatten#-v2 l d)
     #;(if (and (list? l) (not (zero? d)))
-        (apply append (map (curryr flatten2 (sub1 d)) l))
-        l)
+          (apply append (map (curryr flatten2 (sub1 d)) l))
+          l)
     (if (or (not (list? l)) (empty? l) (zero? d))
         l
         (append (flatten#-v2 (first l) (sub1 d)) (flatten#-v2 (rest l) d))))
-        
+  
   ; converts a template struct into a function of the form 
   ; identifier-substitution-map -> syntax.
   (define (make-rewriter template)
@@ -549,15 +558,15 @@
           (error (format "syntax-rules pattern must begin with an identifier: ~a" s)))
         (parse-syntax-rule (cdar s) (cadr s) def-env literal-ids)))
     (when (or (null? syntax)
-            (null? (cdr syntax))
-            (not (list? (cddr syntax))))
-        (error "syntax-rules must contain at least a literals list"))
+              (null? (cdr syntax))
+              (not (list? (cddr syntax))))
+      (error "syntax-rules must contain at least a literals list"))
     (when (not (eqv? (car syntax) 'syntax-rules))
-        (error "the first identifier of syntax-rules syntax must be the symbol 'syntax-rules"))
+      (error "the first identifier of syntax-rules syntax must be the symbol 'syntax-rules"))
     (define literals (parse-literals (cadr syntax)))
     (define rules (parse-pattern/template-pairs (cddr syntax) literals))
     rules)
-
+  
   ;Converts a list of rules into a single macro transformer function
   ; (list[rule]) -> (syntax, hash-table, hash-table) -> (syntax, hash-table, hash-table)
   ;hash-table no. 1 represents the environment at the time of macro use
@@ -574,9 +583,9 @@
         (for/fold ((result use-env))
           ((id regular-ids))
           (define cur-binding (hash-ref def-env id (void)))
-          (if (void? cur-binding);why would we ever be void?
+          (if (void? cur-binding)
               result
-              (hash-set result id cur-binding))))
+              (hash-set result (hash-ref fresh-regular-env id) cur-binding))))
       (define new-orig-sym-env
         (for/fold ([result orig-sym-env])
           ((id regular-ids))
@@ -584,7 +593,7 @@
       (define new-syntax (rewriter macro-env))
       (values new-syntax new-use-env new-orig-sym-env))
     (if (null? syntax-rules)
-        (lambda (syntax) (error "no rules provided, which means the macro invocation always fails"))
+        (lambda (syntax use-env orig-sym-env) (error "no rules provided, which means the macro invocation always fails"))
         (lambda (syntax use-env orig-sym-env)
           (let loop 
             ((match-failures '())
@@ -597,5 +606,8 @@
                       (loop (cons match match-failures)
                             (cdr rem-rules))
                       (rewrite rule syntax use-env match orig-sym-env)))))))) 
+  
+  (define (parse-syntax-transformer syntax def-env)
+    (make-macro-transformer
+     (parse-syntax-rules syntax def-env)))
   )
-     

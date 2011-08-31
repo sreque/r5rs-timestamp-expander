@@ -489,3 +489,6 @@
      (match r1
      [(list (? (sym-matcher 'list)) (list 'list 1 2 3) (list (? (sym-matcher 'quote)) (list 'list 1 2 3))) #t])))
   (check-quote-env qe1 '(quote list)))
+
+;TODO add test for edge case of syntax-rules with empty rule list
+;we should be handling this correctly but an automated test would make us more certain
