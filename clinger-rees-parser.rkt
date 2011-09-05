@@ -2,7 +2,8 @@
   (provide (all-defined-out))
   (require racket
            "clinger-rees-syntax-rules.rkt")
-  
+  ;our goal in this file is to define methods that can handle all the primitive forms that aren't easily defined in terms of another form
+  ;  top-level define, local define, define-syntax, let-syntax, letrec-syntax, lambda
   ;(define (syntax-definition? form)
     
   (define (verify-binding-form-shape binding-form)
@@ -73,6 +74,42 @@
         (define transformer (parse-syntax-transformer (cadr binding-form) extended-env))
         (set-box! ref transformer))
       (values (cadr syntax) extended-env)))
-         
-     
+  
+  (define (verify-lambda-formals formals)
+      (define (add-id s v)
+        (if (symbol? v)
+            (if (set-member? s v)
+                (raise-syntax-error#
+                 formals
+                 (format "Duplicate identifier detected in argument list: ~a" v))
+                (set-add s v))
+            (raise-syntax-error#
+             v
+             (format "invalid argument to a formals list: `~a'. All members should be identifiers" v))))
+      (let loop ([rem formals]
+                 [ids (set)])
+        (if  (or (cons? rem) (null? rem))
+             (if (empty? rem)
+                 ids
+                 (loop (cdr rem) (add-id ids (car rem))))
+             (add-id ids rem))))
+  
+  ;verifies the shape of the lambda form and returns the set of identifiers the form binds
+  ; if this function ever became part of something other than an exander, it could be modified
+  ; to return information about the formals 
+  (define (verify-lambda-shape syntax)
+    (when (< (length syntax) 2)
+      (raise-syntax-error#
+       syntax
+       "lambda form requires at least an argument list and one expression"))
+    (verify-lambda-formals (car syntax)))
+  
+  (define (reduce-lambda syntax env)
+    (define ids (verify-lambda-shape syntax))
+    (define (extend-env)
+      (for/fold ([result env])
+        ((id ids))
+        (hash-set result id id)))
+    (values (cdr syntax) (extend-env)))
+           
 )

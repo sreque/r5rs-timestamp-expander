@@ -3,6 +3,11 @@
          "clinger-rees-syntax-rules.rkt"
          "clinger-rees-parser.rkt")
 
+(define-syntax check-syntax-error
+  (syntax-rules ()
+    [(_ action ...)
+     (check-exn syntax-error? (lambda () action ...))]))
+
 ;test that let-syntax returns the expected environment and body syntax
 ;TODO test that the parsed macros actually work properly
 (let*-values
@@ -47,7 +52,42 @@
   (printf "~a\n" s1)
   (printf "~a\n" e1))
 
+;test verify lambda formals
+(begin
+  (check-equal? (verify-lambda-formals '(a b c d e f g)) (apply set '(a b c d e f g)))
+  (check-equal? (verify-lambda-formals '(a . b)) (set 'a 'b))
+  (check-equal? (verify-lambda-formals '(|.| . dot)) (set '|.| 'dot))
+  (check-equal? (verify-lambda-formals '()) (set))
+  (check-equal? (verify-lambda-formals 'variable-arity) (set 'variable-arity))
+  (check-syntax-error (verify-lambda-formals '(())))
+  (check-syntax-error (verify-lambda-formals '(a b . #(my vector))))
+  (check-syntax-error (verify-lambda-formals '(id id2 id3 number5 5 . a)))
+  )
 
+;test verify lambda shape
+(begin
+  (check-syntax-error (verify-lambda-shape '()))
+  (check-syntax-error (verify-lambda-shape '(())))
+  (check-equal? (verify-lambda-shape '(() 5)) (set))
+  (check-equal? (verify-lambda-shape '((a b . c) 1 2 (3 (4 (5))))) (set 'a 'b 'c))
+  )
 
-                   
-    
+;test reduce-lambda
+(let*-values
+    ([(formals) '(a b c )]
+     [(body) '(+ a b c)]
+     [(lambda-expr) `(,formals ,body)]
+     [(_body extended-env) (reduce-lambda lambda-expr (hash))])
+  (check-equal? _body (list body))
+  (check-equal? extended-env (hash 'a 'a 'b 'b 'c 'c))) 
+
+;test reduce-lambda with multiple body expressions
+(let*-values
+    ([(expr1) '(+ 1 2 3)]
+     [(expr2) '#(a b c)]
+     [(expr3) '#{1 2 3 4}]
+     [(body env) (reduce-lambda `(() ,expr1 ,expr2 ,expr3) (hash))])
+  (check-equal? env (hash))
+  (check-equal? body (list expr1 expr2 expr3)))
+     
+            

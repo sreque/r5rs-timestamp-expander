@@ -83,3 +83,19 @@
     [(_ a)
      (list a 'a 'b b)]))
 (quote-test (list 1 2 3))
+
+;syntax error
+#;(define empty-lambda
+  (lambda ()))
+#;(empty-lambda)
+(define dot-lambda
+  (lambda (|.| . rest)
+    (+ |.| (apply + rest))))
+(dot-lambda 1 2 3)
+
+(let-syntax ([a 
+              (syntax-rules () 
+                [(a v) (format "produced by macro: ~a\n" v)])])
+  (display (a 1))
+  (let ([a (lambda (v) (format "produced by lambda: ~a" v))])
+    (display (a 2))))
