@@ -443,21 +443,25 @@
   (λ (k v) (set! size (add1 size))))
   size)
 
+;assumes all identifiers in env were renamed from symbols, and that all symbols were bound locally at the time of definition, and that the syntax definition is not recursive (let-syntax).
+;verifies that exactly the bindings that are expected are present and are based off their parent bindings.
 (define (check-quote-env env symbols)
   (define env-reversed (invert-hash env))
   (for ([sym symbols])
-        (check-pred (sym-matcher sym) (hash-ref env-reversed sym)))
+    (check-pred (sym-matcher sym) (hash-ref env-reversed sym)))
   (check-equal? (length symbols) (hash-length env)))
 
-;simple test of the 'and' macro, which showcases the fact that I don't yet have the ability to parse recursive macros
+(define and-syntax
+  '(syntax-rules ()
+     ((and) #t)
+     ((and test) test)
+     ((and test1 test2 ...)
+      (if test1 (and test2 ...) #f))))
+;simple test of the 'and' macro definition in the presence of local defines. 
+;This would actually cause the and macro to not work as expected if used with let-syntax, but that is beyond this test.
 (let*-values 
     ([(rules) (parse-syntax-rules 
-               '(syntax-rules ()
-                  ((and) #t)
-                  ((and test) test)
-                  ((and test1 test2 ...)
-                   (if test1 (and test2 ...) #f))) (hash))]
-     
+               and-syntax (hash))]    
      [(macro) (make-macro-transformer rules)]
      [(env) (hash 'and 'and 'if 'if)]
      [(qenv) (hash)]
@@ -476,6 +480,16 @@
   (check-equal? qe2 qenv)
   (check-quote-env qe3 '(if and)))
 
+;with no local bindings for and and if, a macro should generate identifiers whose binding denotes the same top-level value as their original identifiers.
+(let*-values
+    ([(macro) (parse-syntax-transformer and-syntax (hash))]
+     [(s e qe) (macro '(and a b 1) (hash) (hash))]
+     [(req) (invert-hash qe)]
+     [(new-and new-if) (values (hash-ref req 'and) (hash-ref req 'if))])
+  (check-equal? (length (hash-keys req)) 2)
+  (check-equal? (hash-ref e new-and) (denotation 'and))
+  (check-equal? (hash-ref e new-if) (denotation 'if)))
+  
 ;test to show that we are handling quote forms properly by not treating them specially, since we don't know the exact binding of each quote identifier yet
 (let*-values
     ([(rules) (parse-syntax-rules

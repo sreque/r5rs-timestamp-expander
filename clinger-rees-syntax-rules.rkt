@@ -27,6 +27,7 @@
     (for/fold ((result env1))
       (((k v) env2))
       (hash-set result k v)))
+  (struct denotation (id) #:transparent)
   
   (define (merge-match-results seq)
     (let/ec break
@@ -584,7 +585,7 @@
           ((id regular-ids))
           (define cur-binding (hash-ref def-env id (void)))
           (if (void? cur-binding)
-              result
+              (hash-set result (hash-ref fresh-regular-env id) (denotation id))
               (hash-set result (hash-ref fresh-regular-env id) cur-binding))))
       (define new-orig-sym-env
         (for/fold ([result orig-sym-env])

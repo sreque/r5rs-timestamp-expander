@@ -115,3 +115,10 @@
 (define (a . b)   ;this is either undefined or illegal by the r5rs spec, but the Racket interpreter handles it just fine. We will follow racket's example
   (printf "~a\n" b))
 (a 1 2 3 4 5)
+
+(define (add . xs) (apply + xs))
+;Racket exhibits strange behavior here! With this line, the interpreter no longer treats + as a special or pre-defined form for the ENTIRE file!
+;This means that code before this point now fails, because it uses + before the definition below, even though you'd
+; expect + to have its original definition until the re-binding that occurs below, which, at least, according to r5rs, has the meaning of set! if the symbol had a binding already.
+#;(define (+ . xs) (map (λ (v) (add1 v)) xs)) 
+(add 1 2 3)
