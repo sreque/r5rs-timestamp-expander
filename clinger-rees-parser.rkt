@@ -111,5 +111,37 @@
         ((id ids))
         (hash-set result id id)))
     (values (cdr syntax) (extend-env)))
+  
+  ;verifies that a define is shaped correctly and then returns the identifier the define binds
+  (define (verify-define-shape syntax)
+    (cond
+      [(< (length syntax) 2)
+       (raise-syntax-error#
+        syntax
+        "define form does not have the required arguments")]
+      [(symbol? (car syntax))
+       (if (or (null? (cdr syntax)) (not (null? (cddr syntax))))
+           (raise-syntax-error#
+            syntax
+            "define form with one variable as its first argument must have exactly one expression following the identifier")
+           (car syntax))]
+      [(cons? (car syntax))
+       (if (null? (car syntax))
+           (raise-syntax-error#
+            syntax
+            "The first argument to a define form, if a list, must contain at least one identifier")
+           (caar syntax))]
+      [else (raise-syntax-error# 
+             syntax
+             "First argument to a define form must be an identifier or a list of an identifier prepended to a formals list")]))
+  
+  (define (reduce-define syntax env)
+    (define id (verify-define-shape syntax))
+    (define body 
+      (if (symbol? (car syntax))
+          (cadr syntax)
+          `(lambda ,(cdar syntax) ,@(cdr syntax))))
+    (values (hash-set env id id) body))
+                   
            
 )

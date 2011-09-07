@@ -97,5 +97,21 @@
               (syntax-rules () 
                 [(a v) (format "produced by macro: ~a\n" v)])])
   (display (a 1))
-  (let ([a (lambda (v) (format "produced by lambda: ~a" v))])
+  (let ([a (lambda (v) (format "produced by lambda: ~a\n" v))])
     (display (a 2))))
+
+
+(define-syntax r1
+  (syntax-rules ()
+    [(_ syntax ...) (r2 syntax ...)]))
+
+#;(r1 1 2 3) ;fails because r2 not defined yet.
+(define-syntax r2
+  (syntax-rules ()
+    [(_ syntax ...) (apply + (list syntax ...))]))
+
+(r1 10 20 30)
+
+(define (a . b)   ;this is either undefined or illegal by the r5rs spec, but the Racket interpreter handles it just fine. We will follow racket's example
+  (printf "~a\n" b))
+(a 1 2 3 4 5)

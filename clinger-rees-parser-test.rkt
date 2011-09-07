@@ -89,5 +89,28 @@
      [(body env) (reduce-lambda `(() ,expr1 ,expr2 ,expr3) (hash))])
   (check-equal? env (hash))
   (check-equal? body (list expr1 expr2 expr3)))
+
+;test verify-define
+
+(begin
+  (check-syntax-error (verify-define-shape '()))
+  (check-syntax-error (verify-define-shape '(a)))
+  (check-syntax-error (verify-define-shape '(())))
+  (check-syntax-error (verify-define-shape '(a b c)))
+  (check-equal? (verify-define-shape '(a #(vector bob))) 'a)
+  (check-equal? (verify-define-shape '((a . b) body)) 'a) ;not in r5rs spec, but Racket supports it
+  (check-equal? (verify-define-shape '((a b c d e f g . h) body)) 'a))
+
+;test reduce define
+(let*-values
+    ([(var-def) '(define a (if #t true false))]
+     [(var-lambda-def) '(define (a b c) + 1 2 3 4 5)]
+     [(var-env var-body) (reduce-define (cdr var-def) (hash))]
+     [(var-lambda-env var-lambda-body) (reduce-define (cdr var-lambda-def) (hash))])
+  (check-equal? var-env (hash 'a 'a))
+  (check-equal? var-lambda-env (hash 'a 'a))
+  (check-equal? var-body (caddr var-def))
+  (check-equal? var-lambda-body '(lambda (b c) + 1 2 3 4 5))
+  (check-syntax-error (reduce-lambda (list #{a b c d}) (hash))))
      
             
