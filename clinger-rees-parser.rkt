@@ -46,7 +46,7 @@
               (hash-set result 
                         (car binding-form)
                         (parse-syntax-transformer (cadr binding-form) def-env)))])
-      (values (cadr syntax) extended-env)))
+      (values (cdr syntax) extended-env)))
  
   (define (reduce-letrec-syntax syntax def-env)
     (define (make-delayed-transformer ref)
@@ -73,7 +73,7 @@
         (define ref (hash-ref ref-map (car binding-form)))
         (define transformer (parse-syntax-transformer (cadr binding-form) extended-env))
         (set-box! ref transformer))
-      (values (cadr syntax) extended-env)))
+      (values (cdr syntax) extended-env)))
   
   (define (verify-lambda-formals formals)
       (define (add-id s v)
@@ -109,7 +109,7 @@
     (define (extend-env)
       (for/fold ([result env])
         ((id ids))
-        (hash-set result id id)))
+        (hash-set result id (gensym id))))
     (values (cdr syntax) (extend-env)))
   
   ;verifies that a define is shaped correctly and then returns the identifier the define binds
@@ -142,6 +142,118 @@
           (cadr syntax)
           `(lambda ,(cdar syntax) ,@(cdr syntax))))
     (values (hash-set env id id) body))
-                   
+  
+  ;returns a symbol if the identifier is bound to a runtime value
+  ;returns a procedure if the identifier is bound to a syntax transformer
+  ;returns void if the identifier is unbound
+  (define (get-denotation symbol top-env local-env)
+    (define local-denotation (hash-ref local-env symbol (void)))
+    (cond
+      [(void? local-denotation) ;unbound locally
+       (hash-ref top-env symbol (void))] ;therefore get top level binding
+      [(denotation? local-denotation)  ;bound to the top-level denotation of another identifier
+       (hash-ref top-env (denotation-id local-denotation) (void))] ;therefore get the top-level denotation of the other identifier
+      [else local-denotation])) ;bound locally, therefore return local binding
+         
+  (define (unquote-syntax syntax quote-env)
+    (define rcurried (λ (s) (unquote-syntax s quote-env)))
+    (cond
+      [(list? syntax)   (map rcurried syntax)]
+      [(vector? syntax) (vector-map rcurried syntax)]
+      [(symbol? syntax) (hash-ref quote-env syntax syntax)]
+      [else             syntax]))
+  
+  ;expand a piece of syntax that is not at the top level and not at the beginning of a body
+  ;this means that define and define-syntax is illegal
+  (define (expand-inner-syntax syntax top-env local-env quote-env)
+    (define (handle-list)
+      (cond
+        [(empty? syntax)
+         (raise-syntax-error#
+          syntax
+          "illegal empty list")]
+        [(symbol? (car syntax))
+         (handle-symbol-application)]
+        [else (handle-procedure-application)]))
+    (define (handle-procedure-application)
+      (map (lambda (child-syntax) (expand-inner-syntax child-syntax top-env local-env quote-env)) syntax))
+    (define (handle-local-extension reducer)
+      (define-values (body-syntax extended-env) (reducer (cdr syntax) local-env))
+      (expand-inner-syntax `(begin @,body-syntax) top-env extended-env))
+    (define (handle-symbol-application)
+      (define symbol (car syntax))
+      (define local-binding (hash-ref local-env symbol (void)))
+      (define denotation-symbol
+        (if (denotation? local-binding) (denotation-id local-binding) symbol))
+      (define denotation (get-denotation symbol top-env local-env))
+      (define bound? (not (void? denotation)))
+      (define denotes-keyword?
+        (if bound?
+            (lambda (keyword) #f)
+            (lambda (keyword) (eqv? denotation-symbol keyword))))
+      #;(printf "symbol=~a denotation-symbol=~a bound?=~a eqv-quote=~a\n" symbol denotation-symbol bound? (denotes-keyword? 'quote))
+      (cond
+        [(or (denotes-keyword? 'define) (denotes-keyword? 'define-syntax))
+         (raise-syntax-error#
+          syntax
+          (format "~a illegal except at the top level and at the beginning of a body expression" symbol))]
+        [(denotes-keyword? 'begin)
+         (expand-inner-syntax `((lambda () @,(cdr syntax))) top-env local-env)]
+        [(denotes-keyword? 'let-syntax)
+         (handle-local-extension reduce-let-syntax)]
+        [(denotes-keyword? 'letrec-syntax)
+         (handle-local-extension reduce-letrec-syntax)]
+        [(denotes-keyword? 'lambda)
+         (handle-local-extension reduce-lambda )]
+        [(denotes-keyword? 'quote)
+         (if (or
+              (null? (cdr syntax))
+              (not (cons? (cdr syntax)))
+              (not (null? (cddr syntax))))
+             (raise-syntax-error#
+              syntax
+              "Quote form must contain exactly one argument")
+             (unquote-syntax syntax quote-env))]
+        [(procedure? denotation) 
+         (define-values (expanded-syntax expanded-local-env expanded-quote-env) 
+           (denotation syntax local-env quote-env))
+         (expand-inner-syntax expanded-syntax top-env expanded-local-env expanded-quote-env)]
+        [else (handle-procedure-application)]))
+    (cond
+      [(cons? syntax)
+       (handle-list)]
+      [(vector? syntax)
+       (raise-syntax-error#
+        syntax
+        "support for vector macros not yet added")]
+      [(symbol? syntax)
+       (define denotation (get-denotation syntax top-env local-env))
+       (define user-sym (hash-ref quote-env syntax syntax))
+       #;(printf "symbol=~a user-symbol=~a denotation=~a top-env=~a local-env=~a\n" syntax user-sym denotation top-env local-env)
+       (cond
+         [(procedure? denotation)
+           (raise-syntax-error#
+            syntax
+            (format "Identifier ~a is bound to a macro: which must be applied to arguments" user-sym))]
+         [(void? denotation)
+          (raise-syntax-error#
+           syntax
+           (format "Identifier ~a is unbound" user-sym))]
+         [(symbol? denotation)
+          denotation]
+         [else
+          (raise-syntax-error#
+           syntax
+           (format "Unrecognized denotation: ~a.\n This suggests a bug in the macro expander." denotation))])]
+      [(syntax-datum? syntax) syntax]
+      [else 
+       (raise-syntax-error#
+        syntax
+        "Unrecognized syntax type")]))
+           
+         
+         
+          
+                  
            
 )

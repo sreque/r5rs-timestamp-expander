@@ -27,6 +27,7 @@
     (for/fold ((result env1))
       (((k v) env2))
       (hash-set result k v)))
+  
   (struct denotation (id) #:transparent)
   
   (define (merge-match-results seq)

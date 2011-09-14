@@ -3,6 +3,22 @@
          "clinger-rees-syntax-rules.rkt"
          "clinger-rees-parser.rkt")
 
+;copy-pasted from clinger-rees-syntax-rules-test.rkt
+(define (string-prefix? string prefix)
+  (define end (string-length prefix))
+  (if (< (string-length string) end)
+      #f
+      (let loop ([idx 0])
+        (cond 
+          [(>= idx end) #t]
+          [(not (eqv? (string-ref string idx) (string-ref prefix idx))) #f]
+          [else (loop (add1 idx))]))))
+
+;copy-pasted from clinger-rees-syntax-rules-test.rkt
+(define (sym-matcher prefix-sym)
+  (define prefix (symbol->string prefix-sym))
+  (lambda (sym)
+    (string-prefix? (symbol->string sym) prefix)))
 (define-syntax check-syntax-error
   (syntax-rules ()
     [(_ action ...)
@@ -28,7 +44,7 @@
        ,body-syntax) 
        (hash))])
   (check-equal? (set 'when 'unless) (apply set (hash-keys extended-env)))
-  (check-equal? body-syntax body-syntax-returned))
+  (check-equal? `(,body-syntax) body-syntax-returned))
 
 ;test definition of 'and' macro with letrec
 (let*-values
@@ -79,7 +95,10 @@
      [(lambda-expr) `(,formals ,body)]
      [(_body extended-env) (reduce-lambda lambda-expr (hash))])
   (check-equal? _body (list body))
-  (check-equal? extended-env (hash 'a 'a 'b 'b 'c 'c))) 
+  (check-not-exn
+   (λ ()
+     (match extended-env
+       [(hash-table ('a (? (sym-matcher 'a))) ('b (? (sym-matcher 'b))) ('c (? (sym-matcher 'c)))) #t]))) )
 
 ;test reduce-lambda with multiple body expressions
 (let*-values
@@ -113,4 +132,43 @@
   (check-equal? var-lambda-body '(lambda (b c) + 1 2 3 4 5))
   (check-syntax-error (reduce-lambda (list #{a b c d}) (hash))))
      
-            
+;test unquote
+(let*-values
+    ([(quote-expr) '(quote (a b c 1 2 3 "you" "and" "me" we-make-three))]
+     [(macro) (parse-syntax-transformer
+               `(syntax-rules ()
+                  [(id) ,quote-expr])
+               (hash))]
+     [(syntax local-env quote-env) (macro '(id) (hash) (hash))])
+  (check-not-exn
+   (λ () 
+     (match syntax
+       [(list (? (sym-matcher 'quote)) (list (? (sym-matcher 'a)) (? (sym-matcher 'b)) (? (sym-matcher 'c)) 1 2 3 "you" "and" "me" (? (sym-matcher 'we-make-three)))) #t])))
+  (check-equal? (unquote-syntax syntax quote-env) quote-expr)
+  (check-equal? (expand-inner-syntax syntax (hash) local-env quote-env) quote-expr))
+
+;test symbol expansion, both user symbols and macro-generated symbols
+(let*-values
+    ([(sym) 'symbol]
+     [(empty-env) (hash)]
+     [(sym-defined-env) (hash sym sym)]
+     [(macro) (parse-syntax-transformer
+               '(syntax-rules ()
+                  [(id) (display "hello world!")]) empty-env)]
+     [(sym-defined-as-macro-env) (hash sym macro)]
+     [(uses-sym-syntax) `(syntax-rules ()
+                            [(id)  (,sym 1 2 3)])]
+     [(macro-undefined) (parse-syntax-transformer uses-sym-syntax empty-env)]
+     [(macro-defined) (parse-syntax-transformer uses-sym-syntax sym-defined-env)])
+  (check-equal? (expand-inner-syntax sym empty-env sym-defined-env empty-env) sym)
+  (check-equal? (expand-inner-syntax sym sym-defined-env empty-env empty-env) sym)
+  (check-exn syntax-error?
+             (λ () (expand-inner-syntax sym empty-env empty-env empty-env)))
+  (check-exn syntax-error?
+             (λ () (expand-inner-syntax sym empty-env (hash-set sym-defined-env sym macro) empty-env)))
+  (check-equal?
+   (expand-inner-syntax '(id) empty-env (hash-set sym-defined-env 'id macro-defined) empty-env) `(,sym 1 2 3))
+  (check-exn syntax-error?
+             (λ () (expand-inner-syntax '(id) empty-env (hash-set sym-defined-env 'id macro-undefined) empty-env))))
+     
+     

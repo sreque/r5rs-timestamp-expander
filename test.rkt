@@ -122,3 +122,25 @@
 ; expect + to have its original definition until the re-binding that occurs below, which, at least, according to r5rs, has the meaning of set! if the symbol had a binding already.
 #;(define (+ . xs) (map (λ (v) (add1 v)) xs)) 
 (add 1 2 3)
+
+(define-syntax plus-macro
+  (syntax-rules ()
+    [(_) +]))
+
+(define-syntax plus-macro2
+  (syntax-rules ()
+    [(_ args ...) (+ args ...)]))
+
+(define-syntax plus-plus-macro
+  (syntax-rules ()
+    [(_) plus-macro]))
+
+;illegal. you can't reduce to a macro and then apply it as part of an outer expression
+#;((plus-plus-macro) 1 2 3 4)
+
+(define-syntax quote-macro
+  (syntax-rules ()
+    [(_) quote]))
+
+;illegal. you can't reduce to a quote keyword and apply it as part of an outer expression
+#;((quote-macro) these symbols are not defined)
