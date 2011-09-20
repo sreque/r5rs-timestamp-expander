@@ -163,8 +163,14 @@
       [(symbol? syntax) (hash-ref quote-env syntax syntax)]
       [else             syntax]))
   
+  (define (expand-inner-body-syntax syntax-list top-env local-env quote-env)
+    (raise-syntax-error#
+     syntax-list
+     "not yet implemented"))
+  
   ;expand a piece of syntax that is not at the top level and not at the beginning of a body
   ;this means that define and define-syntax is illegal
+  ;returns the expanded syntax. Since no identifiers can be bound, there is no need to return a new local-env or quote-env.
   (define (expand-inner-syntax syntax top-env local-env quote-env)
     (define (handle-list)
       (cond
@@ -174,12 +180,15 @@
           "illegal empty list")]
         [(symbol? (car syntax))
          (handle-symbol-application)]
-        [else (handle-procedure-application)]))
+        [(cons? (car syntax)) (handle-procedure-application)]
+        [else (raise-syntax-error#
+                syntax
+                "head value cannot possibly be a procedure")]))
     (define (handle-procedure-application)
       (map (lambda (child-syntax) (expand-inner-syntax child-syntax top-env local-env quote-env)) syntax))
     (define (handle-local-extension reducer)
       (define-values (body-syntax extended-env) (reducer (cdr syntax) local-env))
-      (expand-inner-syntax `(begin @,body-syntax) top-env extended-env))
+      (expand-inner-body-syntax  body-syntax top-env extended-env quote-env))
     (define (handle-symbol-application)
       (define symbol (car syntax))
       (define local-binding (hash-ref local-env symbol (void)))
@@ -198,7 +207,7 @@
           syntax
           (format "~a illegal except at the top level and at the beginning of a body expression" symbol))]
         [(denotes-keyword? 'begin)
-         (expand-inner-syntax `((lambda () @,(cdr syntax))) top-env local-env)]
+         (expand-inner-syntax `((lambda () @,(cdr syntax))) top-env local-env quote-env)]
         [(denotes-keyword? 'let-syntax)
          (handle-local-extension reduce-let-syntax)]
         [(denotes-keyword? 'letrec-syntax)
@@ -220,7 +229,7 @@
          (expand-inner-syntax expanded-syntax top-env expanded-local-env expanded-quote-env)]
         [else (handle-procedure-application)]))
     (cond
-      [(cons? syntax)
+      [(or (cons? syntax) (null? syntax))
        (handle-list)]
       [(vector? syntax)
        (raise-syntax-error#
@@ -249,7 +258,7 @@
       [else 
        (raise-syntax-error#
         syntax
-        "Unrecognized syntax type")]))
+        (format "Unrecognized syntax type for the following syntax: ~a" syntax))]))
            
          
          

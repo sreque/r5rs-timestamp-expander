@@ -171,4 +171,75 @@
   (check-exn syntax-error?
              (λ () (expand-inner-syntax '(id) empty-env (hash-set sym-defined-env 'id macro-undefined) empty-env))))
      
+;test expanding data
+(let*
+    ([expand (λ (v) (expand-inner-syntax v (hash) (hash) (hash)))]
+     [test (λ (v) (check-equal? (expand v) v))])
+  (test #\d)
+  (test "string")
+  (test 5.5))
+
+;test expanding literals supported by the Racket reader but not by r5rs
+(check-exn syntax-error? (λ () (expand-inner-syntax #&17 (hash) (hash) (hash))))
+
+;vectors not yet supported
+(check-exn syntax-error? (λ () (expand-inner-syntax #(1 2 3) (hash) (hash) (hash))))
+
+;an empty list is illegal syntax
+(check-exn syntax-error? (λ () (expand-inner-syntax '() (hash) (hash) (hash))))
+;TODO: test handle-list
+
+;check procedure application of a symbol
+(let*
+    ([syntax '(+ 1 2 3)]
+     [expanded (expand-inner-syntax syntax (hash '+ '+) (hash) (hash))])
+  (check-not-exn
+   (λ () (match expanded [(list (? (sym-matcher '+)) 1 2 3) #t]))))
+
+;check procedure application where the operator is a a list
+(let*
+    ([syntax '((plus) 4 5 6)]
+     [expanded (expand-inner-syntax syntax (hash) (hash 'plus 'plus) (hash))])
+  (check-equal? expanded syntax))
+
+;check handling of begin
+;NYI requires expand-inner-body-syntax
+#;(let*
+    ([syntax '(begin (side-effects!) (return-value 'sym))]
+     [expanded (expand-inner-syntax syntax
+                                    (hash 'side-effects! 'side-effects!)
+                                    (hash 'return-value 'return-value)
+                                    (hash))])
+  (check-equal? expanded '((lambda () (side-effects!) (return-value 'sym)))))
+
+;test macro use
+(let*
+    
+    ([macro-syntax '(syntax-rules () [(macro args ...) (list args ...)])]
+     [macro (parse-syntax-transformer macro-syntax (hash))]
+     [syntax '(append (macro 1 2 3) (macro 4 5 6))]
+     [expanded (expand-inner-syntax syntax (hash 'append 'append 'macro macro 'list 'list) (hash) (hash))])
+  (check-not-exn
+   (λ () 
+     (match expanded
+       [(list 'append (list 'list 1 2 3) (list 'list 4 5 6)) #t]))))
      
+;test illegal define
+(check-exn syntax-error?
+           (λ () (expand-inner-syntax '(define a 5) (hash) (hash) (hash))))
+
+;test illegal define-syntax`
+(check-exn syntax-error?
+           (λ () (expand-inner-syntax '(define-syntax bob (syntax-rules () [(bob dole) '()])) (hash) (hash) (hash))))
+
+;shouldn't be able to apply values that can't resolve to functions
+(check-exn
+ syntax-error?
+ (λ ()
+   (expand-inner-syntax '("I'm a function! Really!" 'no 'you 'are 'not) (hash) (hash) (hash))))
+  ;procedure-application
+  ;symbol application
+    ;let-syntax, letrec-syntax
+    ;lambda
+    ;macro use (binding generated identifiers, match against same identifiers with different bindings)
+  
