@@ -237,9 +237,33 @@
  syntax-error?
  (λ ()
    (expand-inner-syntax '("I'm a function! Really!" 'no 'you 'are 'not) (hash) (hash) (hash))))
-  ;procedure-application
-  ;symbol application
-    ;let-syntax, letrec-syntax
-    ;lambda
-    ;macro use (binding generated identifiers, match against same identifiers with different bindings)
-  
+
+;test simple lambda expression expansion
+(let ([syntax 
+       (expand-inner-syntax 
+        '(lambda (a b c) (+ a b c)) (hash '+ '+) (hash) (hash))])
+  (check-not-exn
+   (λ ()
+     (match syntax
+       [(list 'lambda 
+              (list (? (sym-matcher 'a)) (? (sym-matcher 'b)) (? (sym-matcher 'c))) 
+              (list 'begin (list '+ (? (sym-matcher 'a)) (? (sym-matcher 'b)) (? (sym-matcher 'c))))) #t]))))
+
+;simple test case for hygienic macro expansion using let-syntax, letrec-syntax, and lambda
+(for ([local-syntax-type (list 'let-syntax 'letrec-syntax)])
+  (let*
+      ([syntax `((lambda (x)
+                   (,local-syntax-type
+                       ((m (syntax-rules ()
+                             [(m) x])))
+                     ((lambda (x) (m)) "inner"))) "outer")]
+       [expanded-syntax (expand-inner-syntax syntax (hash) (hash) (hash))])
+    (match-define
+      (list (list 'lambda (list x1) (list 'begin (list 'begin (list (list 'lambda (list x2) x1) "inner")))) "outer") expanded-syntax)
+    (check-not-equal? x1 x2)
+    (check-true ((sym-matcher 'x) x1))
+    (check-true ((sym-matcher 'x) x2))))
+
+;TODO
+  ;test body syntax with defines, begins, macros that expand to defines, macros that expand to begins with defines, etc.
+    ;this requires that we implement letrec, which we will do as library syntax

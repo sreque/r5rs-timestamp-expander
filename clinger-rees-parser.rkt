@@ -95,7 +95,7 @@
              (add-id ids rem))))
   
   ;verifies the shape of the lambda form and returns the set of identifiers the form binds
-  ; if this function ever became part of something other than an exander, it could be modified
+  ; if this function ever became part of something other than an expander, it could be modified
   ; to return information about the formals 
   (define (verify-lambda-shape syntax)
     (when (< (length syntax) 2)
@@ -104,13 +104,14 @@
        "lambda form requires at least an argument list and one expression"))
     (verify-lambda-formals (car syntax)))
   
+  ;extends the environment and returns the list of body expressions of the lambda with the new environment
   (define (reduce-lambda syntax env)
     (define ids (verify-lambda-shape syntax))
-    (define (extend-env)
+    (define (extended-env)
       (for/fold ([result env])
         ((id ids))
         (hash-set result id (gensym id))))
-    (values (cdr syntax) (extend-env)))
+    (values (cdr syntax) (extended-env)))
   
   ;verifies that a define is shaped correctly and then returns the identifier the define binds
   (define (verify-define-shape syntax)
@@ -163,11 +164,103 @@
       [(symbol? syntax) (hash-ref quote-env syntax syntax)]
       [else             syntax]))
   
-  (define (expand-inner-body-syntax syntax-list top-env local-env quote-env)
-    (raise-syntax-error#
-     syntax-list
-     "not yet implemented"))
+  ;This function should be private, if I took the time to learn how to do that with Racket modules.
+  ;it returns a tuple of the denotation of a symbol and a predicate that can be used to test if the denotation is a particular keyword
+  ;the denotation will either be void, a symbol, or a procedure
+  ;the predicate will return true if the denotation is a symbol that matches the passed-in keyword, and false otherwise 
+  (define (get-denotation-and-keyword-predicate symbol top-env local-env)  
+    (define local-binding (hash-ref local-env symbol (void)))
+    (define denotation-symbol
+      (if (denotation? local-binding) (denotation-id local-binding) symbol))
+    (define denotation (get-denotation symbol top-env local-env))
+    (define bound? (not (void? denotation)))
+    (define denotes-keyword? (if bound?
+                                 (lambda (keyword) #f)
+                                 (lambda (keyword) (eqv? denotation-symbol keyword))))
+    (values denotation denotes-keyword?))
   
+  ;expand a list of body syntax expressions.
+  ;this function returns a single list, even though it takes a list of expressions.
+  ;this list will either be a begin that wraps the expanded statements or else a letrec.
+  ;this function handles defines using letrec.
+  ;it attempts to allow one to splice defines with a begin expression and use macros that expand to defines or begins with defines.
+  (define (expand-inner-body-syntax syntax-list top-env local-env quote-env)
+    ;There's a good chance this code, meant to allow the non-r5rs feature of having macros expand into internal defines, could be broken by design.
+    ;it has to expand and rewrite everything all the way because we throw away the syntactic environment at the end of this function call
+    (define (handle-macro-use macro use-syntax local-env quote-env)
+      (define-values (new-syntax new-local-env new-quote-env) (macro use-syntax local-env quote-env))
+      (cond
+        [(and (cons? new-syntax) (symbol? (car new-syntax)))
+         (define-values (denotation denotes-keyword?) (get-denotation-and-keyword-predicate (car new-syntax) top-env new-local-env))
+         (cond
+           [(denotes-keyword? 'define)
+            (verify-define-shape new-syntax)
+            (cons 
+             (car new-syntax) 
+             (cons
+              (cadr new-syntax) 
+              (map (λ (v) (expand-inner-syntax v top-env new-local-env new-quote-env)) (cddr new-syntax))))]
+           [(procedure? denotation)
+            (handle-macro-use denotation new-syntax new-local-env new-quote-env)]
+           [else
+            (expand-inner-syntax new-syntax top-env new-local-env new-quote-env)])]
+        [else
+         (expand-inner-syntax new-syntax top-env new-local-env new-quote-env)]))
+    (define (loop defines-list rem-list)
+      (cond 
+        [(empty? rem-list)
+         (raise-syntax-error#
+          syntax-list
+          "body must contain at least one expression that is not a define")]
+        [(and (cons? (car rem-list)) (symbol? (caar rem-list)))
+         (define app-expr (car rem-list))
+         (define symbol (car app-expr))
+         (define-values (denotation denotes-keyword?) (get-denotation-and-keyword-predicate symbol top-env local-env))
+         (cond
+           [(denotes-keyword? 'define)
+            (verify-define-shape (cdr app-expr))
+            (let
+                ([id (cadr app-expr)] [value (caddr app-expr)])
+              (loop (cons (list id value) defines-list (cdr rem-list))))]
+           [(denotes-keyword? 'begin)
+            (loop defines-list (append (cdr app-expr) rem-list))]
+           [(procedure? denotation)
+            (handle-macro-use denotation app-expr local-env quote-env)]
+           [else
+            (define-values (new-syntax new-local-env new-quote-env)
+              (rewrite-inner-body-syntax defines-list rem-list local-env quote-env))
+            #;(printf "new syntax: ~a\n" new-syntax)
+            (expand-inner-syntax new-syntax top-env new-local-env new-quote-env)])]
+        [else
+         (define-values (new-syntax new-local-env new-quote-env)
+           (rewrite-inner-body-syntax defines-list rem-list local-env quote-env))
+         #;(printf "new syntax: ~a\n" new-syntax)
+         (expand-inner-syntax new-syntax top-env new-local-env new-quote-env)]))
+    (loop '() syntax-list))
+  
+  ;implement syntactic rewrite of internal defines as a macro for hygiene
+  (define rewrite-inner-body-macro
+    (parse-syntax-transformer
+     '(syntax-rules ()
+        [(macro () body ...) (begin body ...)]
+        [(macro ((symbol def) ...) body ...)
+         (letrec
+             ((symbol def) ...) body ...)]) 
+     (hash)))
+  
+  ;implement syntactic rewrite of internal begin statements as a macro for hygiene
+  ;for now, we are going to treat internal begin's as a special form and not use this macro at all.
+  (define rewrite-inner-begin-macro
+    (parse-syntax-transformer 
+     '(syntax-rules ()
+        [(macro statements ...) ((lambda () statements ...))])
+     (hash)))
+  
+  ;instead of calling rewrite-inner-begin-macro directly, use this function instead
+  ;it is expected that the defines-list is in reverse order of the original declaration
+  (define (rewrite-inner-body-syntax inverse-defines-list body-list local-env quote-env)
+    (rewrite-inner-body-macro `(,(gensym 'inner-body-macro) ,(reverse inverse-defines-list) ,@body-list) local-env quote-env))
+
   ;expand a piece of syntax that is not at the top level and not at the beginning of a body
   ;this means that define and define-syntax is illegal
   ;returns the expanded syntax. Since no identifiers can be bound, there is no need to return a new local-env or quote-env.
@@ -186,20 +279,14 @@
                 "head value cannot possibly be a procedure")]))
     (define (handle-procedure-application)
       (map (lambda (child-syntax) (expand-inner-syntax child-syntax top-env local-env quote-env)) syntax))
-    (define (handle-local-extension reducer)
+    ;this will reduce the syntax to its body and expanded environment and then expand the environment
+    ;The return value is a single piece of syntax, either a begin or letrec expression
+    (define (handle-local-syntax-extension reducer)
       (define-values (body-syntax extended-env) (reducer (cdr syntax) local-env))
       (expand-inner-body-syntax  body-syntax top-env extended-env quote-env))
     (define (handle-symbol-application)
       (define symbol (car syntax))
-      (define local-binding (hash-ref local-env symbol (void)))
-      (define denotation-symbol
-        (if (denotation? local-binding) (denotation-id local-binding) symbol))
-      (define denotation (get-denotation symbol top-env local-env))
-      (define bound? (not (void? denotation)))
-      (define denotes-keyword?
-        (if bound?
-            (lambda (keyword) #f)
-            (lambda (keyword) (eqv? denotation-symbol keyword))))
+      (define-values (denotation denotes-keyword?) (get-denotation-and-keyword-predicate symbol top-env local-env))
       #;(printf "symbol=~a denotation-symbol=~a bound?=~a eqv-quote=~a\n" symbol denotation-symbol bound? (denotes-keyword? 'quote))
       (cond
         [(or (denotes-keyword? 'define) (denotes-keyword? 'define-syntax))
@@ -207,13 +294,20 @@
           syntax
           (format "~a illegal except at the top level and at the beginning of a body expression" symbol))]
         [(denotes-keyword? 'begin)
-         (expand-inner-syntax `((lambda () @,(cdr syntax))) top-env local-env quote-env)]
+         #;(define-values (new-syntax new-local-env new-quote-env) 
+           (rewrite-inner-body-macro (cdr syntax) local-env quote-env))
+         #;(expand-inner-syntax  new-syntax top-env new-local-env new-quote-env)
+         (cons 'begin (map (λ (v) (expand-inner-syntax v top-env local-env quote-env)) (cdr syntax)))]
         [(denotes-keyword? 'let-syntax)
-         (handle-local-extension reduce-let-syntax)]
+         (handle-local-syntax-extension reduce-let-syntax)]
         [(denotes-keyword? 'letrec-syntax)
-         (handle-local-extension reduce-letrec-syntax)]
+         (handle-local-syntax-extension reduce-letrec-syntax)]
         [(denotes-keyword? 'lambda)
-         (handle-local-extension reduce-lambda )]
+         (define-values (body-syntax new-local-env) (reduce-lambda (cdr syntax) local-env))
+         (list
+          'lambda
+          (expand-inner-syntax (cadr syntax) top-env new-local-env quote-env)
+          (expand-inner-body-syntax  body-syntax top-env new-local-env quote-env))]
         [(denotes-keyword? 'quote)
          (if (or
               (null? (cdr syntax))
@@ -263,6 +357,5 @@
          
          
           
-                  
-           
+                           
 )

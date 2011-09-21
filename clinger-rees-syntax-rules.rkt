@@ -108,9 +108,9 @@
       [(_ (_pattern _syntax _point) (x y) body1 body-rest ...)
        (let-values ([(pattern syntax point) (values _pattern _syntax _point)])
          (if (not (list? syntax))
-             (pattern-mismatch pattern syntax "syntax not a list")
+             (pattern-mismatch pattern syntax (format "syntax not a list: ~a" syntax))
              (if (< (length syntax) point)
-                 (pattern-mismatch pattern syntax "Syntax list length too short")
+                 (pattern-mismatch pattern syntax (format "Syntax list length too short: ~a" syntax))
                  (let-values ([(x y) (split-at syntax point)])
                    body1 body-rest ...))))]))
   
@@ -139,7 +139,7 @@
   ;Both should be lists of the same size.
   (define (multi-match parent-pattern matcher-list syntax-list init-value use-env)
     (if (not (list? syntax-list))
-        (pattern-mismatch parent-pattern syntax-list "syntax not a list")
+        (pattern-mismatch parent-pattern syntax-list (format "syntax not a list: ~a" syntax-list))
         (if (not (eqv? (length matcher-list) (length syntax-list)))
             (pattern-mismatch (input-pattern-source parent-pattern) syntax-list 
                               (format "arity mismatch\n  pattern:~a\n  syntax:~a" parent-pattern syntax-list))
@@ -601,7 +601,7 @@
             ((match-failures '())
              (rem-rules syntax-rules))
             (if (empty? rem-rules)
-                (error "match failed: ~a" (reverse match-failures))
+                (error (format "match failed\nsyntax: ~a\nmatch errors: ~a" syntax (reverse match-failures)))
                 (let* ([rule (car rem-rules)]
                        [match ((syntax-rule-matcher rule) (cdr syntax) use-env)])
                   (if (pattern-mismatch? match)
