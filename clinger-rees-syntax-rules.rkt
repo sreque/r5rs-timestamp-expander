@@ -487,7 +487,7 @@
            ;all sub-lists should be of the same length
            ;Is there any case where this might not be true that we need to check for?
            (for/list ([id pattern-ids])
-             (flatten# (hash-ref sub-map id) (sub1 num-ellipses))))
+             (flatten# (hash-ref sub-map id '()) (sub1 num-ellipses))))
          (apply 
           map 
           (lambda args 
@@ -504,8 +504,8 @@
       [(improper-template-list source sub-templates tail-template)
        (define tail-rewriter (make-rewriter tail-template))
        (list-fuser
-        (map (lambda (t) make-rewriter t) sub-templates)
-        (map (lambda (t) rewriter-fuser t) sub-templates)
+        (map (lambda (t) (make-rewriter t)) sub-templates)
+        (map (lambda (t) (rewriter-fuser t)) sub-templates)
         (lambda (sub-map) (tail-rewriter sub-map)))]
       [(template-datum d) 
        (lambda (ignored) d)]))
@@ -553,7 +553,7 @@
         (when (not (eqv? 2 (length s)))
           (error (format "pattern and template list is not of length 2: ~a" s)))
         (when (not (list? (car s)))
-          (error (format "syntax-rules pattern must be a list: ~a" s)))
+          (error (format "syntax-rules pattern must be a list: ~a" (car s))))
         (when (empty? (car s))
           (error (format "syntax-rules pattern must be nonempty: ~a" s)))
         (when (not (symbol? (caar s)))
@@ -577,7 +577,7 @@
     ;assume at this point that syntax-rules is a non-empty list of syntax-rule structs.
     (define (rewrite rule syntax use-env pattern-env orig-sym-env)
       (match-define (syntax-rule matcher rewriter regular-ids def-env) rule)
-      (define fresh-regular-env 
+      (define fresh-regular-env
         (for/hash ([id regular-ids])
           (values id (gensym id))))
       (define macro-env (merge-envs fresh-regular-env pattern-env)) 

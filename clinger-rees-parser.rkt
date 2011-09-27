@@ -27,10 +27,10 @@
        "second value of binding form must be a syntax definition")))
   
   (define (verify-syntax-binding-shape syntax form-name)
-    (when (not (eqv? 2 (length syntax)))
+    (when (< (length syntax) 2)
         (raise-syntax-error# 
          syntax
-         (format "expected exactly 2 arguments to ~a, got ~a" (length syntax) form-name)))
+         (format "expected at least 2 arguments to ~a, got ~a" form-name (length syntax))))
     (when (not (list? (car syntax)))
       (raise-syntax-error#
        (car syntax)
@@ -136,12 +136,16 @@
              syntax
              "First argument to a define form must be an identifier or a list of an identifier prepended to a formals list")]))
   
-  (define (reduce-define syntax env)
+  (define (parse-define syntax)
     (define id (verify-define-shape syntax))
     (define body 
       (if (symbol? (car syntax))
           (cadr syntax)
           `(lambda ,(cdar syntax) ,@(cdr syntax))))
+    (values id body))
+  
+  (define (reduce-define syntax env)
+    (define-values (id body) (parse-define syntax))
     (values (hash-set env id id) body))
   
   ;returns a symbol if the identifier is bound to a runtime value
@@ -179,9 +183,12 @@
                                  (lambda (keyword) (eqv? denotation-symbol keyword))))
     (values denotation denotes-keyword?))
   
+  ;This is the hack I use to get working the feature where macros can expand to internal defines
+  ;this is basically a piece of syntax together with an environment and a reverse symbol map for quoting
+  (define-struct partially-expanded (syntax local-env quote-env) #:transparent)
+  
   ;expand a list of body syntax expressions.
-  ;this function returns a single list, even though it takes a list of expressions.
-  ;this list will either be a begin that wraps the expanded statements or else a letrec.
+  ;this function returns a list of expressions, just as it takes as input a list of expressions
   ;this function handles defines using letrec.
   ;it attempts to allow one to splice defines with a begin expression and use macros that expand to defines or begins with defines.
   (define (expand-inner-body-syntax syntax-list top-env local-env quote-env)
@@ -193,59 +200,68 @@
         [(and (cons? new-syntax) (symbol? (car new-syntax)))
          (define-values (denotation denotes-keyword?) (get-denotation-and-keyword-predicate (car new-syntax) top-env new-local-env))
          (cond
-           [(denotes-keyword? 'define)
-            (verify-define-shape new-syntax)
-            (cons 
-             (car new-syntax) 
-             (cons
-              (cadr new-syntax) 
-              (map (λ (v) (expand-inner-syntax v top-env new-local-env new-quote-env)) (cddr new-syntax))))]
            [(procedure? denotation)
             (handle-macro-use denotation new-syntax new-local-env new-quote-env)]
            [else
-            (expand-inner-syntax new-syntax top-env new-local-env new-quote-env)])]
+            (partially-expanded new-syntax new-local-env new-quote-env)])]
         [else
-         (expand-inner-syntax new-syntax top-env new-local-env new-quote-env)]))
+         #;(printf "after expanding ~a to ~a, recursively epxanding with new-local-env=~a\n" use-syntax new-syntax new-local-env)
+          (partially-expanded new-syntax new-local-env new-quote-env)]))
     (define (loop defines-list rem-list)
+      (define app-pred (λ (v) (and (cons? v) (symbol? (car v)))))
+      (define super-app-pred (λ (v) (or (app-pred v) (and (partially-expanded? v) (app-pred (partially-expanded-syntax v))))))
       (cond 
         [(empty? rem-list)
          (raise-syntax-error#
           syntax-list
-          "body must contain at least one expression that is not a define")]
-        [(and (cons? (car rem-list)) (symbol? (caar rem-list)))
-         (define app-expr (car rem-list))
+          (format "body must contain at least one expression that is not a define. defines-list=~a" defines-list))]
+        [(super-app-pred (car rem-list))
+         (define app-expr-pre (car rem-list))
+         (define pre-expanded? (partially-expanded? app-expr-pre))
+         (define app-expr (if pre-expanded? (partially-expanded-syntax app-expr-pre) app-expr-pre))
+         (define-values (le qe) 
+           (if pre-expanded?
+               (values (partially-expanded-local-env app-expr-pre) (partially-expanded-quote-env app-expr-pre))
+               (values local-env quote-env)))
+         (define inner-expander
+           (if pre-expanded?
+               (lambda (s te le qe) (expand-inner-syntax s top-env le qe))
+               expand-inner-syntax))
+         (define syntax-wrapper
+           (if pre-expanded?
+               (λ (v) (partially-expanded v le qe))
+               (λ (v) v)))
          (define symbol (car app-expr))
-         (define-values (denotation denotes-keyword?) (get-denotation-and-keyword-predicate symbol top-env local-env))
+         (define-values (denotation denotes-keyword?) (get-denotation-and-keyword-predicate symbol top-env le))
          (cond
            [(denotes-keyword? 'define)
-            (verify-define-shape (cdr app-expr))
-            (let
-                ([id (cadr app-expr)] [value (caddr app-expr)])
-              (loop (cons (list id value) defines-list (cdr rem-list))))]
-           [(denotes-keyword? 'begin)
-            (loop defines-list (append (cdr app-expr) rem-list))]
+            (define-values (id value) (parse-define (cdr app-expr)))
+            (loop (cons (list id (syntax-wrapper value)) defines-list) (cdr rem-list))]
+           [(denotes-keyword? 'begin)            
+            (loop defines-list (append (map syntax-wrapper (cdr app-expr)) (cdr rem-list)))]
            [(procedure? denotation)
-            (handle-macro-use denotation app-expr local-env quote-env)]
+            (loop defines-list (cons (handle-macro-use denotation app-expr le qe) (cdr rem-list)))]
            [else
             (define-values (new-syntax new-local-env new-quote-env)
               (rewrite-inner-body-syntax defines-list rem-list local-env quote-env))
             #;(printf "new syntax: ~a\n" new-syntax)
-            (expand-inner-syntax new-syntax top-env new-local-env new-quote-env)])]
+            (map (λ (v) (inner-expander v top-env new-local-env new-quote-env)) new-syntax)])]
         [else
          (define-values (new-syntax new-local-env new-quote-env)
            (rewrite-inner-body-syntax defines-list rem-list local-env quote-env))
          #;(printf "new syntax: ~a\n" new-syntax)
-         (expand-inner-syntax new-syntax top-env new-local-env new-quote-env)]))
+         (map (λ (v) (expand-inner-syntax v top-env new-local-env new-quote-env)) new-syntax)]))
+    #;(printf "Expanding body syntax: ~a\n" syntax-list)
     (loop '() syntax-list))
   
   ;implement syntactic rewrite of internal defines as a macro for hygiene
   (define rewrite-inner-body-macro
     (parse-syntax-transformer
      '(syntax-rules ()
-        [(macro () body ...) (begin body ...)]
+        [(macro () body ...)  (body ...)]
         [(macro ((symbol def) ...) body ...)
-         (letrec
-             ((symbol def) ...) body ...)]) 
+         ((letrec
+             ((symbol def) ...) body ...))]) 
      (hash)))
   
   ;implement syntactic rewrite of internal begin statements as a macro for hygiene
@@ -255,6 +271,11 @@
      '(syntax-rules ()
         [(macro statements ...) ((lambda () statements ...))])
      (hash)))
+  
+  (define wrap-with-begin-macro
+    (parse-syntax-transformer
+     '(syntax-rules ()
+        [(macro statements ...) (begin statements ...)]) (hash))) 
   
   ;instead of calling rewrite-inner-begin-macro directly, use this function instead
   ;it is expected that the defines-list is in reverse order of the original declaration
@@ -283,7 +304,7 @@
     ;The return value is a single piece of syntax, either a begin or letrec expression
     (define (handle-local-syntax-extension reducer)
       (define-values (body-syntax extended-env) (reducer (cdr syntax) local-env))
-      (expand-inner-body-syntax  body-syntax top-env extended-env quote-env))
+      (cons 'begin (expand-inner-body-syntax  body-syntax top-env extended-env quote-env)))
     (define (handle-symbol-application)
       (define symbol (car syntax))
       (define-values (denotation denotes-keyword?) (get-denotation-and-keyword-predicate symbol top-env local-env))
@@ -297,17 +318,16 @@
          #;(define-values (new-syntax new-local-env new-quote-env) 
            (rewrite-inner-body-macro (cdr syntax) local-env quote-env))
          #;(expand-inner-syntax  new-syntax top-env new-local-env new-quote-env)
-         (cons 'begin (map (λ (v) (expand-inner-syntax v top-env local-env quote-env)) (cdr syntax)))]
+         (cons 'begin (expand-inner-body-syntax (cdr syntax) top-env local-env quote-env))]
         [(denotes-keyword? 'let-syntax)
          (handle-local-syntax-extension reduce-let-syntax)]
         [(denotes-keyword? 'letrec-syntax)
          (handle-local-syntax-extension reduce-letrec-syntax)]
         [(denotes-keyword? 'lambda)
          (define-values (body-syntax new-local-env) (reduce-lambda (cdr syntax) local-env))
-         (list
-          'lambda
-          (expand-inner-syntax (cadr syntax) top-env new-local-env quote-env)
-          (expand-inner-body-syntax  body-syntax top-env new-local-env quote-env))]
+         `(lambda
+           ,(if (empty? (cadr syntax)) '() (expand-inner-syntax (cadr syntax) top-env new-local-env quote-env)) ;we expand inner syntax here simply to do simple identifier rewrites
+          ,@(expand-inner-body-syntax  body-syntax top-env new-local-env quote-env))]
         [(denotes-keyword? 'quote)
          (if (or
               (null? (cdr syntax))
@@ -322,6 +342,7 @@
            (denotation syntax local-env quote-env))
          (expand-inner-syntax expanded-syntax top-env expanded-local-env expanded-quote-env)]
         [else (handle-procedure-application)]))
+    #;(printf "Expanding inner syntax: ~a\n  local-env=~a\n" syntax local-env)
     (cond
       [(or (cons? syntax) (null? syntax))
        (handle-list)]
@@ -349,6 +370,9 @@
            syntax
            (format "Unrecognized denotation: ~a.\n This suggests a bug in the macro expander." denotation))])]
       [(syntax-datum? syntax) syntax]
+      [(partially-expanded? syntax)
+       (match-define (partially-expanded s le qe) syntax)
+       (expand-inner-syntax s top-env le qe)]
       [else 
        (raise-syntax-error#
         syntax

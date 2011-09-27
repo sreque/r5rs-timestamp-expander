@@ -1,7 +1,8 @@
 #lang racket
 (require racket rackunit
          "clinger-rees-syntax-rules.rkt"
-         "clinger-rees-parser.rkt")
+         "clinger-rees-parser.rkt"
+         "clinger-rees-env.rkt")
 
 ;copy-pasted from clinger-rees-syntax-rules-test.rkt
 (define (string-prefix? string prefix)
@@ -110,7 +111,6 @@
   (check-equal? body (list expr1 expr2 expr3)))
 
 ;test verify-define
-
 (begin
   (check-syntax-error (verify-define-shape '()))
   (check-syntax-error (verify-define-shape '(a)))
@@ -145,7 +145,7 @@
      (match syntax
        [(list (? (sym-matcher 'quote)) (list (? (sym-matcher 'a)) (? (sym-matcher 'b)) (? (sym-matcher 'c)) 1 2 3 "you" "and" "me" (? (sym-matcher 'we-make-three)))) #t])))
   (check-equal? (unquote-syntax syntax quote-env) quote-expr)
-  (check-equal? (expand-inner-syntax syntax (hash) local-env quote-env) quote-expr))
+  (check-equal? (expand-inner-syntax syntax r5rs-top-level-env local-env quote-env) quote-expr))
 
 ;test symbol expansion, both user symbols and macro-generated symbols
 (let*-values
@@ -173,14 +173,14 @@
      
 ;test expanding data
 (let*
-    ([expand (λ (v) (expand-inner-syntax v (hash) (hash) (hash)))]
+    ([expand (λ (v) (expand-inner-syntax v r5rs-top-level-env (hash) (hash)))]
      [test (λ (v) (check-equal? (expand v) v))])
   (test #\d)
   (test "string")
   (test 5.5))
 
 ;test expanding literals supported by the Racket reader but not by r5rs
-(check-exn syntax-error? (λ () (expand-inner-syntax #&17 (hash) (hash) (hash))))
+(check-exn syntax-error? (λ () (expand-inner-syntax #&17 r5rs-top-level-env (hash) (hash))))
 
 ;vectors not yet supported
 (check-exn syntax-error? (λ () (expand-inner-syntax #(1 2 3) (hash) (hash) (hash))))
@@ -192,7 +192,7 @@
 ;check procedure application of a symbol
 (let*
     ([syntax '(+ 1 2 3)]
-     [expanded (expand-inner-syntax syntax (hash '+ '+) (hash) (hash))])
+     [expanded (expand-inner-syntax syntax r5rs-top-level-env (hash) (hash))])
   (check-not-exn
    (λ () (match expanded [(list (? (sym-matcher '+)) 1 2 3) #t]))))
 
@@ -247,7 +247,7 @@
      (match syntax
        [(list 'lambda 
               (list (? (sym-matcher 'a)) (? (sym-matcher 'b)) (? (sym-matcher 'c))) 
-              (list 'begin (list '+ (? (sym-matcher 'a)) (? (sym-matcher 'b)) (? (sym-matcher 'c))))) #t]))))
+              (list '+ (? (sym-matcher 'a)) (? (sym-matcher 'b)) (? (sym-matcher 'c)))) #t]))))
 
 ;simple test case for hygienic macro expansion using let-syntax, letrec-syntax, and lambda
 (for ([local-syntax-type (list 'let-syntax 'letrec-syntax)])
@@ -259,11 +259,64 @@
                      ((lambda (x) (m)) "inner"))) "outer")]
        [expanded-syntax (expand-inner-syntax syntax (hash) (hash) (hash))])
     (match-define
-      (list (list 'lambda (list x1) (list 'begin (list 'begin (list (list 'lambda (list x2) x1) "inner")))) "outer") expanded-syntax)
+      (list (list 'lambda (list x1) (list 'begin (list (list 'lambda (list x2) x1) "inner"))) "outer") expanded-syntax)
     (check-not-equal? x1 x2)
     (check-true ((sym-matcher 'x) x1))
     (check-true ((sym-matcher 'x) x2))))
 
-;TODO
-  ;test body syntax with defines, begins, macros that expand to defines, macros that expand to begins with defines, etc.
-    ;this requires that we implement letrec, which we will do as library syntax
+;testing a body syntax list with multiple defines of various shapes
+(let*
+  ([body-syntax
+    '(
+      (define a 1)
+      (define b 2)
+      (define c (lambda () (+ a b)))
+      (define (d a b) (+ a b))
+      (d (c) (c)))]
+   [expanded-syntax
+    (cons 'begin (expand-inner-body-syntax body-syntax r5rs-top-level-env (hash) (hash)))])
+  ;the resulting syntax is getting complex enough that pattern matching feels like too much work
+  (check-equal? 6 (eval expanded-syntax (make-base-namespace))))
+
+;Test macro that expand to begins that contain defines. They should get spliced in.
+;also tests macro that expands to a regular define 
+;also test syntax that is itself a begin containing definitions
+(let*
+    ([syntax
+      '(let-syntax
+           ([definer (syntax-rules ()
+                       [(_ a b c) 
+                        (begin
+                          (define a 1)
+                          (define b 2)
+                          (define c 3))])]
+            [simple-definer (syntax-rules ()
+                              [(_ k v)
+                               (define k v)])])
+         (definer v1 v2 v3)
+         (definer more vars here)
+         (begin
+           (define plus +)
+           (define minus -))
+         (simple-definer hundred 100)
+         (define two 2)
+         (plus (minus here vars more) (minus v1 v2 v3) hundred two))]
+     [expanded1 
+      (expand-inner-syntax syntax r5rs-top-level-env (hash) (hash))]
+     [expanded2
+      (cons 'begin (expand-inner-body-syntax (list syntax) r5rs-top-level-env (hash) (hash)))])
+  (check-equal? 98 (eval expanded1 (make-base-namespace)))
+  (check-equal? 98 (eval expanded2 (make-base-namespace))))
+
+(let*
+    ([syntax
+      '(let-syntax
+           ([macro (syntax-rules ()
+                     [(macro k v) (begin (define k v) (display v))])])
+         (macro a 1)
+         (define b 2)
+         (+ a b))])
+  ;expected illegal define. I should come up with a way to check exception messages that they are coherent
+  (check-exn 
+   syntax-error?
+   (λ () (expand-inner-syntax syntax r5rs-top-level-env (hash) (hash)))))

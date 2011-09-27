@@ -144,3 +144,17 @@
 
 ;illegal. you can't reduce to a quote keyword and apply it as part of an outer expression
 #;((quote-macro) these symbols are not defined)
+
+;how to make new identifiers painted the same as another
+(define-syntax (define-id stx)
+  (define subs (syntax->list stx))
+  (define id (cadr subs))
+  (define value (caddr subs))
+  (datum->syntax
+   stx
+   `(define 
+      ,(string->symbol (format "~a-suffix" (symbol->string (syntax->datum id))))
+      ,value)))
+
+(define-id bob 2)
+(+ bob-suffix 98)
