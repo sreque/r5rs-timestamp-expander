@@ -228,38 +228,34 @@
   ;which would also verify no pattern variable duplication for free
   (define (parse-transformer-pattern syntax literal-identifiers)
     (define (parse-list parsed-stack remaining-list)
-      (if (empty? remaining-list)
-          (fixed-list syntax (reverse parsed-stack))
-          (let ([first (car remaining-list)]
-                [rest (cdr remaining-list)])
-            (case first
-              ['... 
-               (if (not (empty? rest))
-                   (raise-syntax-error#
-                    syntax
-                    "ellipses must occur at the end of a syntax list")
-                   (if (empty? parsed-stack)
-                       (raise (syntax-error 
-                               "ellipses must occur after a pattern inside of a syntax list"
-                               (current-continuation-marks)
-                               syntax))
-                       (ellipses-list syntax (reverse (cdr parsed-stack)) (car parsed-stack))))]
-              ['|.|
-               (if (or (empty? rest) (not (empty? (cdr rest))))
-                   (raise (syntax-error
-                           "syntax list with a . must be followed by exactly one pattern"
-                           (current-continuation-marks)
-                           syntax))
-                   (improper-list
-                    syntax
-                    (reverse parsed-stack)
-                    (parse-transformer-pattern (car rest) literal-identifiers)))]
-              [else
-               (parse-list 
-                (cons (parse-transformer-pattern first literal-identifiers) parsed-stack)
-                rest)]))))
+      (cond
+        [(empty? remaining-list)
+         (fixed-list syntax (reverse parsed-stack))]
+        [(cons? remaining-list)
+         (define-values (first rest) (values (car remaining-list) (cdr remaining-list)))
+         (cond           
+           [(eqv? first '...) 
+            (if (not (empty? rest))
+                (raise-syntax-error#
+                 syntax
+                 "ellipses must occur at the end of a syntax list")
+                (if (empty? parsed-stack)
+                    (raise (syntax-error 
+                            "ellipses must occur after a pattern inside of a syntax list"
+                            (current-continuation-marks)
+                            syntax))
+                    (ellipses-list syntax (reverse (cdr parsed-stack)) (car parsed-stack))))]
+           [else
+            (parse-list 
+             (cons (parse-transformer-pattern first literal-identifiers) parsed-stack)
+             rest)])]
+        [else
+         (improper-list
+          syntax
+          (reverse parsed-stack)
+          (parse-transformer-pattern remaining-list literal-identifiers))]))
     (cond
-      [(list? syntax)
+      [(or (cons? syntax) (null? syntax))
        (parse-list '() syntax)]
       [(symbol? syntax)
        (if (set-member? literal-identifiers syntax)
@@ -267,17 +263,15 @@
            (pattern-identifier syntax))]
       [(syntax-datum? syntax)
        (datum syntax)]
-      [else (raise (syntax-error 
-                    "Unrecognized syntax type" 
-                    (current-continuation-marks) 
-                    syntax))]))
+      [else (raise-syntax-error# 
+             syntax
+             (format "Unrecognized syntax type: ~a" syntax))]))
   
   (define (syntax-datum? syntax)
     (or (string? syntax) (char? syntax) (number? syntax) (boolean? syntax)))
   
   ;we only use env to know if quote has been redefined or not.
   (define (parse-transformer-template syntax pattern-ids)
-    
     (define (find-pattern-ids template)
       (define result
         (let loop ([t template]
@@ -304,13 +298,14 @@
           result))
     (define (parse-list parsed-stack remaining-list)
       #;(printf "  parse-list: ~a ~a\n" parsed-stack remaining-list)
-      (if (empty? remaining-list)
-          (template-list syntax (reverse parsed-stack))
-          (let ([first (car remaining-list)]
-                [rest (cdr remaining-list)])
-            (case first
-              [(...)
-               (if (empty? parsed-stack)
+      (cond
+        [(null? remaining-list)
+         (template-list syntax (reverse parsed-stack))]
+        [(cons? remaining-list)
+         (define-values (first rest) (values (car remaining-list) (cdr remaining-list)))
+         (cond
+           [(eqv? '... first)
+            (if (empty? parsed-stack)
                    (begin
                      (printf "first=~a rest=~a\n" first rest)
                      (raise (syntax-error 
@@ -333,32 +328,26 @@
                             (find-pattern-ids top-parsed)))
                        (cdr parsed-stack)) 
                       rest)))]
-              [(|.|)
-               (if (or (empty? rest) (not (empty? (cdr rest))))
-                   (raise (syntax-error
-                           "syntax list with a . must be followed by exactly one pattern"
-                           (current-continuation-marks)
-                           syntax))
-                   (improper-template-list
-                    syntax
-                    (reverse parsed-stack)
-                    (parse-transformer-template (car rest) pattern-ids)))]
-              [else
+           [else
                (parse-list 
                 (cons (parse-transformer-template first pattern-ids) parsed-stack)
-                rest)]))))
-    #;(printf "parser-transformer-template: ~a list=~a\n" syntax (list? syntax))
+                rest)])]
+        [else
+         (improper-template-list
+          syntax
+          (reverse parsed-stack)
+          (parse-transformer-template remaining-list pattern-ids))]))
+      #;(printf "parser-transformer-template: ~a list=~a\n" syntax (list? syntax))
     (cond
-      [(list? syntax)
+      [(or (cons? syntax) (null? syntax))
        (parse-list '() syntax)]
       [(symbol? syntax)
        (template-identifier syntax)]
       [(syntax-datum? syntax)
        (template-datum syntax)]
-      [else (raise (syntax-error 
-                    (format "Unrecognized type for syntax: ~a" syntax) 
-                    (current-continuation-marks) 
-                    syntax))]))
+      [else (raise-syntax-error# 
+             syntax
+             (format "Unrecognized type for syntax: ~a" syntax))]))
   
   ;Computes how many ellipses apply to each identifier in a pattern object.
   ;Throws a syntax-error if a duplicate variable use is detected.
@@ -552,7 +541,7 @@
           (error (format "Expected a list containing a pattern and template, got a non-list value: ~a" syntax)))
         (when (not (eqv? 2 (length s)))
           (error (format "pattern and template list is not of length 2: ~a" s)))
-        (when (not (list? (car s)))
+        (when (not (or (cons? (car s)) (null? (car s))))
           (error (format "syntax-rules pattern must be a list: ~a" (car s))))
         (when (empty? (car s))
           (error (format "syntax-rules pattern must be nonempty: ~a" s)))

@@ -46,11 +46,11 @@
   
   (define-macro letrec
     (syntax-rules () 
-      [(_ ((var init) ...) |.| body) 
+      [(_ ((var init) ...) . body) 
        (let ((var 'undefined) ...)  ;should I use (void) here?
          (let ((var (let ((temp init)) (lambda () (set! var temp)))) 
                ... 
-               (bod (lambda () |.| body))) 
+               (bod (lambda () . body))) 
            (var) ... (bod)))]))
   
   (define-macro cond

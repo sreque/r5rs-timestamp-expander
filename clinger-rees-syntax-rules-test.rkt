@@ -179,24 +179,16 @@
 ;basic ellipses nesting test
 (let* ([pattern
         (parse-transformer-pattern
-         '(a b |.| (d #t 5 "bob" #\c e)) (set 'd 'e))]
+         '(a b . "bob") (set 'd 'e))]
        [ids (compute-ellipses-nesting pattern)])
   (check-equal?
    pattern
    (improper-list
-    '(a b |.| (d #t 5 "bob" #\c e))
+    '(a b . "bob")
     (list
      (pattern-identifier 'a)
      (pattern-identifier 'b))
-    (fixed-list
-     '(d #t 5 "bob" #\c e)
-     (list
-      (literal-identifier 'd)
-      (datum #t)
-      (datum 5)
-      (datum "bob")
-      (datum #\c)
-      (literal-identifier 'e)))))
+    (datum "bob")))
   (check-equal? ids (hash 'a 0 'b 0)))
 
 
@@ -221,14 +213,17 @@
         (set 'a))))))))
 
 ;test improper-template-list parsing
-(let* ([template 
+;commented this flawed test out for now. You can't make an improper list if the last value is a list!
+; It should be revisite using
+; nested vectors when vectors become supported.
+#;(let* ([template 
         (parse-transformer-template
-         '(a ... ... #f "c" #\5 6 |.| ((very nested) |.| lists))
+         '(a ... ... #f "c" #\5 6 . ((very nested) . lists))
          (set 'a))])
   (check-equal?
    template
    (improper-template-list 
-    '(a ... ... #f "c" #\5 6 |.| ((very nested) |.| lists))
+    '(a ... ... #f "c" #\5 6 . ((very nested) . lists))
     (list
      (ellipses-template
       'a ;TODO syntax should probably include the ellipses too
@@ -240,7 +235,7 @@
      (template-datum #\5)
      (template-datum 6))
     (improper-template-list 
-     '((very nested) |.| lists)
+     '((very nested) . lists)
      (list
       (template-list
        '(very nested)
@@ -283,10 +278,11 @@
 ;is this two tests in one?
 ;the first test checks that an error is thrown if there is no identifier in an ellipses template
 ;the second, tests that we can find an identifier deep inside of an ellipses list
+;TODO: nest inside of vectors once they are supported
 (let* ([bad-syntax
         '(5 ...)]
        [really-nested-identifier-syntax
-        '((1 2 3 |.| (4 5 |.| ('c "d" a #\g))) ...)])
+        '((1 2 3 . (4 5 . a)) ...)])
   (check-exn syntax-error? (lambda () (parse-transformer-template bad-syntax (set 'a))))
   (parse-transformer-template really-nested-identifier-syntax (set 'a))
   #t)
