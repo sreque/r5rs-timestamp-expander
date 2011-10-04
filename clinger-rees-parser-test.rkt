@@ -316,7 +316,39 @@
          (macro a 1)
          (define b 2)
          (+ a b))])
-  ;expected illegal define. I should come up with a way to check exception messages that they are coherent
+  ;expected illegal define. 
+  ;TODO: come up with a way to check the content of the exception
   (check-exn 
    syntax-error?
    (λ () (expand-inner-syntax syntax r5rs-top-level-env (hash) (hash)))))
+
+;simple test of expand-top-level with defines
+(let*
+    ([syntax
+      '(define b 5)]
+     [more-syntax
+      `(,syntax (* b b))]
+     [bad-syntax
+      `(,syntax (* b c))])
+  (define-values (env expanded) (expand-top-level-form (hash) syntax))
+  (define expanded-list (expand-program r5rs-top-level-env more-syntax))
+  (check-equal? env (hash 'b 'b))
+  (check-equal? syntax expanded)
+  (check-equal? expanded-list more-syntax)
+  (check-exn syntax-error? (λ () (expand-program r5rs-top-level-env bad-syntax))))
+
+;simple test of top-level define-syntax
+(let*
+    ([program
+      '((define-syntax define-thunk
+          (syntax-rules ()
+            [(_ key val) (define key (lambda () val))]))
+        (define-thunk a 1)
+        (define-thunk b 2)
+        (display (+ (a) (b)))
+        (define another-value 10)
+        (* another-value (a) (b)))]
+     [expanded-syntax (expand-program r5rs-top-level-env program)])
+  (check-equal? 20 (eval `(begin ,@expanded-syntax) (make-base-namespace))))
+
+

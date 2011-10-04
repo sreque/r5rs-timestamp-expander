@@ -285,7 +285,10 @@
   ;expand a piece of syntax that is not at the top level and not at the beginning of a body
   ;this means that define and define-syntax is illegal
   ;returns the expanded syntax. Since no identifiers can be bound, there is no need to return a new local-env or quote-env.
-  (define (expand-inner-syntax syntax top-env local-env quote-env)
+  (define (expand-inner-syntax syntax top-env local-env quote-env #:at-top-level (at-top-level #f))
+    (define-syntax recur
+      (syntax-rules ()
+        [(_ s le qe) (expand-inner-syntax s top-env le qe #:at-top-level at-top-level)]))
     (define (handle-list)
       (cond
         [(empty? syntax)
@@ -299,7 +302,7 @@
                 syntax
                 "head value cannot possibly be a procedure")]))
     (define (handle-procedure-application)
-      (map (lambda (child-syntax) (expand-inner-syntax child-syntax top-env local-env quote-env)) syntax))
+      (map (lambda (child-syntax) (recur child-syntax local-env quote-env)) syntax))
     ;this will reduce the syntax to its body and expanded environment and then expand the environment
     ;The return value is a single piece of syntax, either a begin or letrec expression
     (define (handle-local-syntax-extension reducer)
@@ -311,9 +314,14 @@
       #;(printf "symbol=~a denotation-symbol=~a bound?=~a eqv-quote=~a\n" symbol denotation-symbol bound? (denotes-keyword? 'quote))
       (cond
         [(or (denotes-keyword? 'define) (denotes-keyword? 'define-syntax))
-         (raise-syntax-error#
-          syntax
-          (format "~a illegal except at the top level and at the beginning of a body expression" symbol))]
+         (if at-top-level
+             (if (denotes-keyword? 'define)
+                 (let*-values ([(id value) (parse-define (cdr syntax))])
+                   `(define ,id ,(recur value local-env quote-env)))
+                 syntax)
+             (raise-syntax-error#
+              syntax
+              (format "~a illegal except at the top level and at the beginning of a body expression" symbol)))]
         [(denotes-keyword? 'begin)
          #;(define-values (new-syntax new-local-env new-quote-env) 
            (rewrite-inner-body-macro (cdr syntax) local-env quote-env))
@@ -326,7 +334,7 @@
         [(denotes-keyword? 'lambda)
          (define-values (body-syntax new-local-env) (reduce-lambda (cdr syntax) local-env))
          `(lambda
-           ,(if (empty? (cadr syntax)) '() (expand-inner-syntax (cadr syntax) top-env new-local-env quote-env)) ;we expand inner syntax here simply to do simple identifier rewrites
+           ,(if (empty? (cadr syntax)) '() (recur (cadr syntax) new-local-env quote-env)) ;we expand inner syntax here simply to do simple identifier rewrites
           ,@(expand-inner-body-syntax  body-syntax top-env new-local-env quote-env))]
         [(denotes-keyword? 'quote)
          (if (or
@@ -340,7 +348,7 @@
         [(procedure? denotation) 
          (define-values (expanded-syntax expanded-local-env expanded-quote-env) 
            (denotation syntax local-env quote-env))
-         (expand-inner-syntax expanded-syntax top-env expanded-local-env expanded-quote-env)]
+         (recur expanded-syntax expanded-local-env expanded-quote-env)]
         [else (handle-procedure-application)]))
     #;(printf "Expanding inner syntax: ~a\n  local-env=~a\n" syntax local-env)
     (cond
@@ -372,12 +380,64 @@
       [(syntax-datum? syntax) syntax]
       [(partially-expanded? syntax)
        (match-define (partially-expanded s le qe) syntax)
-       (expand-inner-syntax s top-env le qe)]
+       (recur s le qe)]
       [else 
        (raise-syntax-error#
         syntax
         (format "Unrecognized syntax type for the following syntax: ~a" syntax))]))
-           
+  
+  ;expand a top level form and return (new-top-env expand-exp)
+  (define (expand-top-level-form top-env sexp)
+    (define (expand-default)
+      (expand-inner-syntax sexp top-env (hash) (hash) #:at-top-level #t))
+    (cond
+      [(and (cons? sexp) (symbol? (car sexp)))
+       (define symbol (car sexp))
+       (define contents (cdr sexp))
+       (define-values (denotation denotes-keyword?) (get-denotation-and-keyword-predicate symbol top-env (hash)))
+       (cond
+         [(denotes-keyword? 'define)
+          (define-values (id body) (parse-define (cdr sexp)))
+          (define new-top-env (hash-set top-env id id))
+          (values new-top-env `(define ,id ,(expand-inner-syntax body new-top-env (hash) (hash))))]
+         [(denotes-keyword? 'define-syntax)
+          (define rest (cdr sexp))
+          (when (not (and (cons? rest) (symbol? (car rest)) (cons? (cdr rest)) (null? (cddr rest))))
+            (raise-syntax-error#
+             sexp
+             "define syntax form should contain exactly one keyword and one transformer spec"))
+            (let*
+                ;so the way things are implemented, recursive macros break if the identifier the macro was bound to is changed to refer to something else.
+                ; I don't know if it is good or standards compliant to do so, but this code ensures that
+                ; identifiers generated by the macro that would refer to the macro always do so, regardless of whether 
+                ; the top-level meaning of the identifier is changed.
+                ([keyword (car rest)]
+                 [transformer-spec (cadr rest)]
+                 [ref (box (void))]
+                 [macro-wrapper (λ (s te le qe) ((unbox ref) s te le qe))]
+                 [new-top-env (hash-set top-env keyword macro-wrapper)]
+                 [macro (parse-syntax-transformer transformer-spec (hash keyword macro-wrapper))])
+              (set-box! ref macro)
+              (values (hash-set top-env keyword macro) (void)))]
+         [(procedure? denotation)
+          (expand-top-level-form top-env (expand-default))]
+         [else
+          (values top-env (expand-default))])]
+       [else
+        (values top-env (expand-default))]))
+  
+  ;expand the output of a reader, which I expect to be a list of forms
+  (define (expand-program orig-top-env syntax-list)
+    (define top-env orig-top-env)
+    (reverse 
+     (foldl 
+      (λ (s a) 
+        (define-values (new-env expanded-syntax) (expand-top-level-form top-env s))
+        (define accum (if (void? expanded-syntax) a (cons expanded-syntax a))) 
+        (set! top-env new-env)
+        accum) 
+      '() 
+      syntax-list)))
          
          
           
