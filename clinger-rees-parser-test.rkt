@@ -331,15 +331,15 @@
      [bad-syntax
       `(,syntax (* b c))])
   (define-values (env expanded) (expand-top-level-form (hash) syntax))
-  (define expanded-list (expand-program r5rs-top-level-env more-syntax))
+  (define-values (new-env expanded-list) (expand-program r5rs-top-level-env more-syntax))
   (check-equal? env (hash 'b 'b))
   (check-equal? syntax expanded)
   (check-equal? expanded-list more-syntax)
   (check-exn syntax-error? (λ () (expand-program r5rs-top-level-env bad-syntax))))
 
 ;simple test of top-level define-syntax
-(let*
-    ([program
+(let*-values
+    ([(program)
       '((define-syntax define-thunk
           (syntax-rules ()
             [(_ key val) (define key (lambda () val))]))
@@ -348,7 +348,15 @@
         (display (+ (a) (b)))
         (define another-value 10)
         (* another-value (a) (b)))]
-     [expanded-syntax (expand-program r5rs-top-level-env program)])
+     [(top-env expanded-syntax) (expand-program r5rs-top-level-env program)])
   (check-equal? 20 (eval `(begin ,@expanded-syntax) (make-base-namespace))))
 
-
+;simple quasiquote tests
+;These examples were taken from http://www.cs.hut.fi/Studies/T-93.210/schemetutorial/node7.html
+(begin 
+  (check-equal?
+   (eval (call-with-values (λ () (expand-program r5rs-top-level-env '(`(,@(cdr '(1 2 3)))))) (λ ls (caadr ls))) (make-base-namespace))
+   '(2 3))
+  (check-equal?
+   (eval (call-with-values (λ () (expand-program r5rs-top-level-env '(`(1 ,(acos -1) ,@(map sqrt '(1 4 9 16 25)))))) (λ ls (caadr ls))) (make-base-namespace))
+   '(1 3.141592653589793 1 2 3 4 5)))

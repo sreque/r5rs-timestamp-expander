@@ -151,7 +151,7 @@
   ;returns a symbol if the identifier is bound to a runtime value
   ;returns a procedure if the identifier is bound to a syntax transformer
   ;returns void if the identifier is unbound
-  (define (get-denotation symbol top-env local-env)
+   (define (get-denotation symbol top-env local-env)
     (define local-denotation (hash-ref local-env symbol (void)))
     (cond
       [(void? local-denotation) ;unbound locally
@@ -414,7 +414,7 @@
                 ([keyword (car rest)]
                  [transformer-spec (cadr rest)]
                  [ref (box (void))]
-                 [macro-wrapper (λ (s te le qe) ((unbox ref) s te le qe))]
+                 [macro-wrapper (λ (s le qe) ((unbox ref) s le qe))]
                  [new-top-env (hash-set top-env keyword macro-wrapper)]
                  [macro (parse-syntax-transformer transformer-spec (hash keyword macro-wrapper))])
               (set-box! ref macro)
@@ -429,15 +429,18 @@
   ;expand the output of a reader, which I expect to be a list of forms
   (define (expand-program orig-top-env syntax-list)
     (define top-env orig-top-env)
-    (reverse 
-     (foldl 
-      (λ (s a) 
-        (define-values (new-env expanded-syntax) (expand-top-level-form top-env s))
-        (define accum (if (void? expanded-syntax) a (cons expanded-syntax a))) 
-        (set! top-env new-env)
-        accum) 
-      '() 
-      syntax-list)))
+    (define expanded 
+      (reverse 
+       (foldl 
+        (λ (s a) 
+          (define-values (new-env expanded-syntax) (expand-top-level-form top-env s))
+          (define accum (if (void? expanded-syntax) a (cons expanded-syntax a))) 
+          (set! top-env new-env)
+          accum) 
+        '() 
+        syntax-list)))
+    (values top-env expanded))
+    
          
          
           

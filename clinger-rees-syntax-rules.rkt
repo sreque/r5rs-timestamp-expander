@@ -21,7 +21,7 @@
   
   ;Should we create a separate data type for environments to restrict operations on them?
   (define (env-lookup env id)
-    (hash-ref env id id))
+    (hash-ref env id (denotation id)))
   
   (define (merge-envs env1 env2)
     (for/fold ((result env1))
@@ -92,6 +92,15 @@
   (struct pattern-mismatch (pattern syntax msg)
     #:transparent)
   
+  ;version of length that works on improper lists, giving them the same length as if they were proper
+  (define (proper-length ls)
+    (when (not (or (cons? ls) (null? ls)))
+      (raise "invalid argument: must be a cons or null"))
+    (let loop ([count 0] [cur ls])
+      (cond
+        [(cons? cur) (loop (add1 count) (cdr cur))]
+        [else count])))
+  
   ;attempts to split a list. On failure, returns a pattern mismatch object
   ;On success, binds two passed-in identifiers to the split values and 
   ;invokes the passed in expressions, which should return either an environment
@@ -107,9 +116,9 @@
     (syntax-rules ()
       [(_ (_pattern _syntax _point) (x y) body1 body-rest ...)
        (let-values ([(pattern syntax point) (values _pattern _syntax _point)])
-         (if (not (list? syntax))
+         (if (not (or (cons? syntax) (null? syntax))) ;we could catch an exception instead rather than duplicating this check that is also done in proper-length
              (pattern-mismatch pattern syntax (format "syntax not a list: ~a" syntax))
-             (if (< (length syntax) point)
+             (if (< (proper-length syntax) point)
                  (pattern-mismatch pattern syntax (format "Syntax list length too short: ~a" syntax))
                  (let-values ([(x y) (split-at syntax point)])
                    body1 body-rest ...))))]))
@@ -153,10 +162,12 @@
       [(literal-identifier id)
        ;should we verify that the input syntax is an identifier here?
        (lambda (syntax use-env)
-         (if (eqv? (env-lookup def-env id) (env-lookup use-env syntax))
+         (define literal-denotation (env-lookup def-env id))
+         (define arg-denotation (env-lookup use-env syntax))
+         (if (equal? literal-denotation arg-denotation)
              (hash)
              (pattern-mismatch pattern syntax 
-                               "Syntax does not match literal identifier or the denotations are different")))]
+                               (format "Syntax does not match literal identifier or the denotations are different: ~a vs ~a" literal-denotation arg-denotation))))]
       ;TODO reimplement ellipses to be the same as with templates
       ;Instead of having an ellipses-list, have an ellipses pattern
       [(ellipses-list _ sub-patterns ellipses-pattern)
@@ -193,7 +204,7 @@
          (multi-match pattern sub-matchers syntax (hash) use-env))]
       [(datum datum)
        (lambda (syntax ignored)
-         (if (eqv? datum syntax)
+         (if (equal? datum syntax)
              (hash)
              (pattern-mismatch datum syntax "Syntax does not match literal datum")))]))
   
@@ -552,8 +563,8 @@
               (null? (cdr syntax))
               (not (list? (cddr syntax))))
       (error "syntax-rules must contain at least a literals list"))
-    (when (not (eqv? (car syntax) 'syntax-rules))
-      (error "the first identifier of syntax-rules syntax must be the symbol 'syntax-rules"))
+    (when (not (equal? (env-lookup def-env (car syntax)) (denotation 'syntax-rules)))
+      (error (format "the first identifier of syntax-rules syntax must be the symbol 'syntax-rules: got ~a" (car syntax))))
     (define literals (parse-literals (cadr syntax)))
     (define rules (parse-pattern/template-pairs (cddr syntax) literals))
     rules)
