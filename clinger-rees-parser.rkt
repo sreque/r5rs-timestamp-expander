@@ -43,6 +43,7 @@
     (let* ([extended-env 
             (for/fold ([result def-env])
               ((binding-form (car syntax)))
+              #;(printf "extending env with let-macro ~a\n" (car binding-form))
               (hash-set result 
                         (car binding-form)
                         (parse-syntax-transformer (cadr binding-form) def-env)))])
@@ -68,6 +69,7 @@
               (define id (car binding-form))
               (define ref (hash-ref ref-map id))
               (define delayed-macro (make-delayed-transformer ref))
+              #;(printf "extending env with letrec-macro ~a\n" id)
               (hash-set result id delayed-macro))])
       (for ([binding-form binding-forms])
         (define ref (hash-ref ref-map (car binding-form)))
@@ -110,7 +112,9 @@
     (define (extended-env)
       (for/fold ([result env])
         ((id ids))
-        (hash-set result id (gensym id))))
+        (define new-id (gensym id))
+        #;(printf "aliasing ~a to ~a with denotation ~a\n" id new-id (hash-ref env id (denotation id)))
+        (hash-set result id new-id)))
     (values (cdr syntax) (extended-env)))
   
   ;verifies that a define is shaped correctly and then returns the identifier the define binds
@@ -165,7 +169,9 @@
     (cond
       [(list? syntax)   (map rcurried syntax)]
       [(vector? syntax) (vector-map rcurried syntax)]
-      [(symbol? syntax) (hash-ref quote-env syntax syntax)]
+      [(symbol? syntax) (let loop ([s syntax]) 
+                          (define new-s (hash-ref quote-env s (void)))
+                          (if (void? new-s) s (loop new-s)))]
       [else             syntax]))
   
   ;This function should be private, if I took the time to learn how to do that with Racket modules.
@@ -225,7 +231,7 @@
                (values local-env quote-env)))
          (define inner-expander
            (if pre-expanded?
-               (lambda (s te le qe) (expand-inner-syntax s top-env le qe))
+               (lambda (s te _le _qe) (expand-inner-syntax s te le qe))
                expand-inner-syntax))
          (define syntax-wrapper
            (if pre-expanded?
@@ -280,6 +286,7 @@
   ;instead of calling rewrite-inner-begin-macro directly, use this function instead
   ;it is expected that the defines-list is in reverse order of the original declaration
   (define (rewrite-inner-body-syntax inverse-defines-list body-list local-env quote-env)
+    #;(printf "defines-list: ~a\n" (reverse inverse-defines-list))
     (rewrite-inner-body-macro `(,(gensym 'inner-body-macro) ,(reverse inverse-defines-list) ,@body-list) local-env quote-env))
 
   ;expand a piece of syntax that is not at the top level and not at the beginning of a body
@@ -307,11 +314,14 @@
     ;The return value is a single piece of syntax, either a begin or letrec expression
     (define (handle-local-syntax-extension reducer)
       (define-values (body-syntax extended-env) (reducer (cdr syntax) local-env))
-      (cons 'begin (expand-inner-body-syntax  body-syntax top-env extended-env quote-env)))
+      (define expanded-forms (expand-inner-body-syntax  body-syntax top-env extended-env quote-env))
+      (if (not (null? (cdr expanded-forms)))
+          (cons 'begin expanded-forms)
+          (car expanded-forms)))
     (define (handle-symbol-application)
       (define symbol (car syntax))
       (define-values (denotation denotes-keyword?) (get-denotation-and-keyword-predicate symbol top-env local-env))
-      #;(printf "symbol=~a denotation-symbol=~a bound?=~a eqv-quote=~a\n" symbol denotation-symbol bound? (denotes-keyword? 'quote))
+      #;(printf "applied symbol=~a denotation=~a eqv-quote?=~a\n" symbol denotation (denotes-keyword? 'quote))
       (cond
         [(or (denotes-keyword? 'define) (denotes-keyword? 'define-syntax))
          (if at-top-level
@@ -361,7 +371,7 @@
       [(symbol? syntax)
        (define denotation (get-denotation syntax top-env local-env))
        (define user-sym (hash-ref quote-env syntax syntax))
-       #;(printf "symbol=~a user-symbol=~a denotation=~a top-env=~a local-env=~a\n" syntax user-sym denotation top-env local-env)
+       #;(printf "unapplied symbol:xs value=~a user-symbol=~a denotation=~a\n" syntax user-sym denotation)
        (cond
          [(procedure? denotation)
            (raise-syntax-error#
@@ -385,6 +395,12 @@
        (raise-syntax-error#
         syntax
         (format "Unrecognized syntax type for the following syntax: ~a" syntax))]))
+  
+  #;(define expand-inner-syntax-orig expand-inner-syntax)
+  #;(set! expand-inner-syntax (lambda (syntax top-env local-env quote-env #:at-top-level (at-top-level #f))
+                              (define result (expand-inner-syntax-orig syntax top-env local-env quote-env #:at-top-level at-top-level))
+                              (printf "before expansion: ~a\nafter expansion: ~a\n" syntax result)
+                              result))
   
   ;expand a top level form and return (new-top-env expand-exp)
   (define (expand-top-level-form top-env sexp)

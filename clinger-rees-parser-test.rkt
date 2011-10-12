@@ -259,7 +259,9 @@
                      ((lambda (x) (m)) "inner"))) "outer")]
        [expanded-syntax (expand-inner-syntax syntax (hash) (hash) (hash))])
     (match-define
-      (list (list 'lambda (list x1) (list 'begin (list (list 'lambda (list x2) x1) "inner"))) "outer") expanded-syntax)
+      #;(list (list 'lambda (list x1) (list 'begin (list (list 'lambda (list x2) x1) "inner"))) "outer")
+      (list (list 'lambda (list x1) (list (list 'lambda (list x2) x1) "inner")) "outer")
+      expanded-syntax)
     (check-not-equal? x1 x2)
     (check-true ((sym-matcher 'x) x1))
     (check-true ((sym-matcher 'x) x2))))

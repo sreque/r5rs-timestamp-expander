@@ -281,7 +281,6 @@
   (define (syntax-datum? syntax)
     (or (string? syntax) (char? syntax) (number? syntax) (boolean? syntax)))
   
-  ;we only use env to know if quote has been redefined or not.
   (define (parse-transformer-template syntax pattern-ids)
     (define (find-pattern-ids template)
       (define result
@@ -584,10 +583,13 @@
       (define new-use-env
         (for/fold ((result use-env))
           ((id regular-ids))
+          (define new-id (hash-ref fresh-regular-env id))
           (define cur-binding (hash-ref def-env id (void)))
-          (if (void? cur-binding)
-              (hash-set result (hash-ref fresh-regular-env id) (denotation id))
-              (hash-set result (hash-ref fresh-regular-env id) cur-binding))))
+          (define binding (if (void? cur-binding)
+                              (denotation id)
+                              cur-binding))
+          #;(printf "expansion aliasing ~a to ~a\n" new-id binding)
+          (hash-set result new-id binding)))
       (define new-orig-sym-env
         (for/fold ([result orig-sym-env])
           ((id regular-ids))
