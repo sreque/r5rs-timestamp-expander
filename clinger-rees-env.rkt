@@ -20,7 +20,7 @@
         string-ci<=? string-ci<? string-ci=? string-ci>=? string-ci>? string-copy string-fill! string-length string-ref 
         string-set! string<=? string<? string=? string>=? string>? string? substring symbol->string symbol? tan transcript-off 
         transcript-on truncate values vector vector->list vector-fill! vector-length vector-ref vector-set! vector? 
-        with-input-from-file with-output-to-file write write-char zero?))
+        with-input-from-file with-output-to-file write write-char zero? if))
   
   (define r5rs-top-level-env 
     (for/hash ([s top-level-variables])

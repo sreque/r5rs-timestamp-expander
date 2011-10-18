@@ -414,10 +414,9 @@
          (define expected-value (hash-ref expected-nestings id null))
          (when (and (not (null? expected-value))
                     (not (eqv? expected-value ellipses-level)))
-           (raise (syntax-error
-                   (format "Ellipses nesting of identifier ~a in template does not match nesting in pattern" id)
-                   (current-continuation-marks)
-                   (output-template-source template))))]
+           (raise-syntax-error#
+            (output-template-source template)
+            (format "Ellipses nesting of identifier ~a in template does not match nesting in pattern. Expected ~a, got ~a. syntax=~a" id expected-value ellipses-level (output-template-source top-template))))]
         [(ellipses-template source inner-template num-ellipses pattern-ids)
          (dfs inner-template (+ num-ellipses ellipses-level))]
         [(template-list source sub-templates)
