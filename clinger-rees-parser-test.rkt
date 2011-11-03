@@ -162,13 +162,14 @@
      [(macro-defined) (parse-syntax-transformer uses-sym-syntax sym-defined-env)])
   (check-equal? (expand-inner-syntax sym empty-env sym-defined-env empty-env) sym)
   (check-equal? (expand-inner-syntax sym sym-defined-env empty-env empty-env) sym)
-  (check-exn syntax-error?
+  ;not checking for unbound variables anymore
+  #;(check-exn syntax-error?
              (λ () (expand-inner-syntax sym empty-env empty-env empty-env)))
   (check-exn syntax-error?
              (λ () (expand-inner-syntax sym empty-env (hash-set sym-defined-env sym macro) empty-env)))
   (check-equal?
    (expand-inner-syntax '(id) empty-env (hash-set sym-defined-env 'id macro-defined) empty-env) `(,sym 1 2 3))
-  (check-exn syntax-error?
+  #;(check-exn syntax-error?
              (λ () (expand-inner-syntax '(id) empty-env (hash-set sym-defined-env 'id macro-undefined) empty-env))))
      
 ;test expanding data
@@ -325,7 +326,11 @@
    (λ () (expand-inner-syntax syntax r5rs-top-level-env (hash) (hash)))))
 
 ;simple test of expand-top-level with defines
-(let*
+;I'm punting on having the macro expander detect undefined variables for now
+;Doing so would require threading extra state through existing code
+;I didn't originally anticipate the fact that you can have undefined variables
+  ;that refer to top-level bindings to be defined later in the file.
+#;(let*
     ([syntax
       '(define b 5)]
      [more-syntax
@@ -352,6 +357,25 @@
         (* another-value (a) (b)))]
      [(top-env expanded-syntax) (expand-program r5rs-top-level-env program)])
   (check-equal? 20 (eval `(begin ,@expanded-syntax) (make-base-namespace))))
+
+;simple test of top-level mutually recursive functions
+
+(let*-values
+    ([(syntax)
+      '((define (my-even? num)
+          (if (zero? num) #t (my-odd? (sub1 num))))
+        (define (my-odd? num)
+          (if (zero? num) #f (my-even? (sub1 num)))))]
+     [(env expanded)
+      (expand-program r5rs-top-level-env syntax)]
+     [(ns) (make-base-namespace)])
+  (check-true (hash-has-key? env 'my-even?))
+  (check-true (hash-has-key? env 'my-odd?))
+  (for ([v expanded])
+    (eval v ns))
+  (check-true (eval '(my-even? 2) ns))
+  (check-false (eval '(my-odd? 2) ns)))
+     
 
 ;simple quasiquote tests
 ;These examples were taken from http://www.cs.hut.fi/Studies/T-93.210/schemetutorial/node7.html

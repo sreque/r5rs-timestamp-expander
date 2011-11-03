@@ -207,11 +207,12 @@
          (define-values (denotation denotes-keyword?) (get-denotation-and-keyword-predicate (car new-syntax) top-env new-local-env))
          (cond
            [(procedure? denotation)
+            #;(printf "invoking macro ~a on ~a\n" (car new-syntax) new-syntax)
             (handle-macro-use denotation new-syntax new-local-env new-quote-env)]
            [else
             (partially-expanded new-syntax new-local-env new-quote-env)])]
         [else
-         #;(printf "after expanding ~a to ~a, recursively epxanding with new-local-env=~a\n" use-syntax new-syntax new-local-env)
+         #;(printf "after using macro ~a to expand ~a to ~a, recursively epxanding with new-local-env=~a\n" denotation use-syntax new-syntax new-local-env)
           (partially-expanded new-syntax new-local-env new-quote-env)]))
     (define (loop defines-list rem-list)
       (define app-pred (λ (v) (and (cons? v) (symbol? (car v)))))
@@ -246,6 +247,7 @@
            [(denotes-keyword? 'begin)            
             (loop defines-list (append (map syntax-wrapper (cdr app-expr)) (cdr rem-list)))]
            [(procedure? denotation)
+            #;(printf "invoking macro ~a on ~a\n" symbol app-expr)
             (loop defines-list (cons (handle-macro-use denotation app-expr le qe) (cdr rem-list)))]
            [else
             (define-values (new-syntax new-local-env new-quote-env)
@@ -356,6 +358,7 @@
               "Quote form must contain exactly one argument")
              (unquote-syntax syntax quote-env))]
         [(procedure? denotation) 
+         #;(printf "invoking macro ~a on ~a\n" symbol syntax)
          (define-values (expanded-syntax expanded-local-env expanded-quote-env) 
            (denotation syntax local-env quote-env))
          (recur expanded-syntax expanded-local-env expanded-quote-env)]
@@ -378,7 +381,9 @@
             syntax
             (format "Identifier ~a is bound to a macro: which must be applied to arguments" user-sym))]
          [(void? denotation)
-          (raise-syntax-error#
+          syntax
+          ;this is actually ok because it could refer to a top-level binding to be defined later
+          #;(raise-syntax-error#
            syntax
            (format "Identifier ~a is unbound" user-sym))]
          [(symbol? denotation)

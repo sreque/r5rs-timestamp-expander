@@ -196,8 +196,7 @@
 (let*
     ([template
       (parse-transformer-template
-       '((a ...))
-       (set 'a))])
+       '((a ...)) (hash 'a 1))])
   (check-equal?
    template
    (template-list 
@@ -207,9 +206,11 @@
       '(a ...)
       (list
        (ellipses-template
-        'a
-        (template-identifier 'a)
+        '(a ...)
+        (template-identifier 'a 1)
         1
+        0
+        (hash 'a (set 1))
         (set 'a))))))))
 
 ;test improper-template-list parsing
@@ -219,7 +220,7 @@
 #;(let* ([template 
         (parse-transformer-template
          '(a ... ... #f "c" #\5 6 . ((very nested) . lists))
-         (set 'a))])
+         (hash 'a 2) )])
   (check-equal?
    template
    (improper-template-list 
@@ -252,28 +253,27 @@
          '((a ...) b) (set))]
        [pattern-nesting 
         (compute-ellipses-nesting pattern)]
-       [pattern-ids (apply set (hash-keys pattern-nesting))]
+       [parse (curryr parse-transformer-template pattern-nesting)]
        [template1
-        (parse-transformer-template
-         '(a ...) pattern-ids)]
+        (parse
+         '(a ...))]
        [template2
-        (parse-transformer-template
-         '(b c d f) pattern-ids)]
+        (parse
+         '(b c d f))]
        [template3 
-        (parse-transformer-template
-         '(g (f 'b (h a ...) "a" b)) pattern-ids)]
-       [bad-template1
-        (parse-transformer-template
-         '((a b) ...) pattern-ids)]
-       [bad-template2
-        (parse-transformer-template
-        '(a (a ...) b) pattern-ids)])
-  (for ([template (list template1 template2 template3)])
+        (parse
+         '(g (f 'b (h a ...) "a" b)))]
+       [template4
+        (parse
+         '((a b) ...))]
+       [bad-syntax1
+        '(a (a ...) b)])
+  #;(for ([template (list template1 template2 template3 template4)])
     (verify-template-ellipses-nesting template pattern-nesting))
-  (for ([template (list bad-template1 bad-template2)])
+  (for ([template (list bad-syntax1)])
     (check-exn syntax-error? 
                (lambda () 
-                 (verify-template-ellipses-nesting template pattern-nesting)))))
+                 (parse template)))))
 
 ;is this two tests in one?
 ;the first test checks that an error is thrown if there is no identifier in an ellipses template
@@ -283,8 +283,8 @@
         '(5 ...)]
        [really-nested-identifier-syntax
         '((1 2 3 . (4 5 . a)) ...)])
-  (check-exn syntax-error? (lambda () (parse-transformer-template bad-syntax (set 'a))))
-  (parse-transformer-template really-nested-identifier-syntax (set 'a))
+  (check-exn syntax-error? (lambda () (parse-transformer-template bad-syntax (hash 'a 1))))
+  (parse-transformer-template really-nested-identifier-syntax (hash 'a 1))
   #t)
 
 
@@ -294,32 +294,26 @@
          (parse-transformer-pattern
           '((((a ...) ...)) ...) (set))]
         [nesting (compute-ellipses-nesting pattern)]
+        [parse (curryr parse-transformer-template nesting)]
         [good1
-          (parse-transformer-template
-           '((a ... ...) ...)
-           (set 'a))]
+          (parse
+           '((a ... ...) ...))]
         [good2
-         (parse-transformer-template
-          '(a ... ... ...)
-          (set 'a))]
+         (parse
+          '(a ... ... ...))]
         [good3
-         (parse-transformer-template
-          '((a ...) ... ...)
-          (set 'a))]
+         (parse
+          '((a ...) ... ...))]
         [bad1
-         (parse-transformer-template
-          '((a ... ... ...) ...)
-          (set 'a))]
+         '((a ... ... ...) ...)]
         [bad2
-         (parse-transformer-template
-          '((a ... ...) ... ...)
-          (set 'a))])
-   (for ([t (list good1 good2 good3)])
+         '((a ... ...) ... ...)])
+   #;(for ([t (list good1 good2 good3)])
      (verify-template-ellipses-nesting t nesting))
    (for ([t (list bad1 bad2)])
      (check-exn syntax-error? 
                 (lambda () 
-                  (verify-template-ellipses-nesting t nesting)))))
+                  (parse t)))))
 
 ;test flatten#
 (let* ([3-level 
@@ -384,25 +378,25 @@
 ;Basically a template is created and used to make a macro.
 ;That macro is then invoked and its resulting syntax is checked.
 (let* 
-    ([pattern-ids (set 'a 'b 'c 'd)]
+    ([pattern-ids (hash 'a 1 'b 1 'c 1 'd 2)]
      [template
       (parse-transformer-template
        '((a ...) ((b c (d ...)) ...) . (e f g ('h "i" (#\k)) 'l))
        pattern-ids)]
-     [reg-ids (find-regular-ids template pattern-ids)]
-     [rewriter (make-rewriter template)]
+     [reg-ids (find-regular-ids template (compose not (curry hash-has-key? pattern-ids)))]
+     [rewriter (make-rewriter template pattern-ids)]
      [sub-map 
       (hash 
-       'a (list 1 2 3)
-       'b (list 4 5 6)
-       'c (list 7 8 9)
-       'd '((10 11 12) (13 14 15) (16 17 18))
-       'e 'e.1
-       'f 'f.1
-       'g 'g.1
-       'quote 'quote.1
-       'h 'h.1
-       'l 'l.1)])
+       'a (hash 1 (list 1 2 3))
+       'b (hash 1 (list 4 5 6))
+       'c (hash 1 (list 7 8 9))
+       'd (hash 2 '((10 11 12) (13 14 15) (16 17 18)))
+       'e (hash 0 'e.1)
+       'f (hash 0 'f.1)
+       'g (hash 0 'g.1)
+       'quote (hash 0 'quote.1)
+       'h (hash 0 'h.1)
+       'l (hash 0 'l.1))])
   (check-equal? 
    reg-ids
    (set 'e 'f 'g 'quote 'h 'l))
