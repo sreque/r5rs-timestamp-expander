@@ -1,8 +1,8 @@
 #lang racket
 (require racket rackunit
-         "clinger-rees-syntax-rules.rkt"
-         "clinger-rees-parser.rkt"
-         "clinger-rees-env.rkt")
+         "../clinger-rees-syntax-rules.rkt"
+         "../clinger-rees-parser.rkt"
+         "../clinger-rees-env.rkt")
 
 ;copy-pasted from clinger-rees-syntax-rules-test.rkt
 (define (string-prefix? string prefix)

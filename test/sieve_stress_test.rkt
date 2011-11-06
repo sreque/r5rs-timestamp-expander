@@ -1,8 +1,8 @@
 #lang racket
 (require racket rackunit
-         "clinger-rees-syntax-rules.rkt"
-         "clinger-rees-parser.rkt"
-         "clinger-rees-env.rkt")
+         "../clinger-rees-syntax-rules.rkt"
+         "../clinger-rees-parser.rkt"
+         "../clinger-rees-env.rkt")
 (define program '(
 ;taken from http://okmij.org/ftp/Scheme/macros.html#syntax-rule-stress-test        
 (define-syntax ??!apply (syntax-rules (??!lambda) ((_ (??!lambda (bound-var . other-bound-vars) body) oval . other-ovals) (letrec-syntax ((subs (syntax-rules (??! bound-var ??!lambda) ((_ val k (??! bound-var)) (appl k val)) ((_ val k (??!lambda bvars int-body)) (subs-in-lambda val bvars (k bvars) int-body)) ((_ val k (x)) (subs val (recon-pair val k ()) x)) ((_ val k (x . y)) (subs val (subsed-cdr val k x) y)) ((_ val k x) (appl k x)))) (subsed-cdr (syntax-rules () ((_ val k x new-y) (subs val (recon-pair val k new-y) x)))) (recon-pair (syntax-rules () ((_ val k new-y new-x) (appl k (new-x . new-y))))) (subs-in-lambda (syntax-rules (bound-var) ((_ val () kp int-body) (subs val (recon-l kp ()) int-body)) ((_ val (bound-var . obvars) (k bvars) int-body) (appl k (??!lambda bvars int-body))) ((_ val (obvar . obvars) kp int-body) (subs-in-lambda val obvars kp int-body)))) (recon-l (syntax-rules () ((_ (k bvars) () result) (appl k (??!lambda bvars result))))) (appl (syntax-rules () ((_ (a b c d) result) (a b c d result)) ((_ (a b c) result) (a b c result)))) (finish (syntax-rules () ((_ () () exp) exp) ((_ rem-bvars rem-ovals exps) (??!apply (??!lambda rem-bvars exps) . rem-ovals))))) (subs oval (finish other-bound-vars other-ovals) body)))))

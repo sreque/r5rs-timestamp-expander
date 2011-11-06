@@ -1,9 +1,9 @@
 #lang racket
 
 (require racket rackunit
-         "clinger-rees-syntax-rules.rkt"
-         "clinger-rees-parser.rkt"
-         "clinger-rees-env.rkt")
+         "../clinger-rees-syntax-rules.rkt"
+         "../clinger-rees-parser.rkt"
+         "../clinger-rees-env.rkt")
 
 ;All of these examples were run through Racket's runtime. The results were used to create a test suite to verify
 ; that this expander behaves the same as Racket's.

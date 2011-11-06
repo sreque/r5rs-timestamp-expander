@@ -1,8 +1,8 @@
 #lang racket
 (require racket rackunit
-         "clinger-rees-syntax-rules.rkt"
-         "clinger-rees-parser.rkt"
-         "clinger-rees-env.rkt")
+         "../clinger-rees-syntax-rules.rkt"
+         "../clinger-rees-parser.rkt"
+         "../clinger-rees-env.rkt")
 (define program '(
 ;(module aaa)
 ; How to write dirty R5RS macros

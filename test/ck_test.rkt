@@ -1,8 +1,8 @@
 #lang racket
 (require racket rackunit
-         "clinger-rees-syntax-rules.rkt"
-         "clinger-rees-parser.rkt"
-         "clinger-rees-env.rkt")
+         "../clinger-rees-syntax-rules.rkt"
+         "../clinger-rees-parser.rkt"
+         "../clinger-rees-env.rkt")
 
 ;this file tests that the expander works with an entire r5rs program.
 

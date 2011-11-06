@@ -1,6 +1,6 @@
 #lang racket
 (require racket rackunit
-         "clinger-rees-syntax-rules.rkt")
+         "../clinger-rees-syntax-rules.rkt")
 (define (check-match-success result)
   (check-pred hash? result))
 
