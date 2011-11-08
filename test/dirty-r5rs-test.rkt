@@ -1,4 +1,4 @@
-(module dirty_r5rs_test racket
+(module dirty-r5rs-test racket
   (provide dirty-r5rs-test)
   (require racket rackunit
            "test-utils.rkt"

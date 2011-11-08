@@ -1,4 +1,4 @@
-(module sieve_stress_test racket
+(module sieve-stress-test racket
   (provide sieve-stress-test)
   (require racket rackunit
            "../clinger-rees-syntax-rules.rkt"

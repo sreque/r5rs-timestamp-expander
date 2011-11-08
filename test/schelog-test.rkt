@@ -1,4 +1,4 @@
-(module schelog_test racket
+(module schelog-test racket
   (provide schelog-test)
   (require racket 
            rackunit

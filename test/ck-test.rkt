@@ -1,4 +1,4 @@
-(module ck_test racket
+(module ck-test racket
   (provide ck-test)
   (require racket rackunit
            "test-utils.rkt"

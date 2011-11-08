@@ -1,4 +1,4 @@
-(module dark_corner_test racket
+(module dark-corner-test racket
   (provide dark-corner-test)
   (require racket rackunit
            "test-utils.rkt"

@@ -4,13 +4,13 @@
  rackunit/text-ui
  "clinger-rees-syntax-rules-test.rkt"
  "clinger-rees-parser-test.rkt"
- "ck_test.rkt"
- "dirty_r5rs_test.rkt"
- "sieve_stress_test.rkt"
- "schelog_test.rkt"
+ "ck-test.rkt"
+ "dirty-r5rs-test.rkt"
+ "sieve-stress-test.rkt"
+ "schelog-test.rkt"
  "r5rs-ellipses-test.rkt"
- "macro_lambda_test.rkt"
- "dark_corner_test.rkt")
+ "macro-lambda-test.rkt"
+ "dark-corner-test.rkt")
 
 (define suites
   (list

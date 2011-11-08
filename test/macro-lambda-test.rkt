@@ -1,4 +1,4 @@
-(module macro_lambda_test racket
+(module macro-lambda-test racket
   (provide macro-lambda-test)
   (require racket rackunit
            "../clinger-rees-syntax-rules.rkt"
