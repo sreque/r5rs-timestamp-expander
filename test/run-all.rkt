@@ -27,4 +27,6 @@
 (define one-suite-to-rule-them-all (make-test-suite "all tests" suites))
 
 #;(run-tests (caddr suites))
-(run-tests one-suite-to-rule-them-all)
+#;(run-tests one-suite-to-rule-them-all)
+(define-values (result cpu-millis real-millis gc-millis) (time-apply run-tests (list one-suite-to-rule-them-all)))
+(printf "real=~as cpu=~as gc=~as" (/ real-millis 1000.0) (/ cpu-millis 1000.0) (/ gc-millis 1000.0)) 

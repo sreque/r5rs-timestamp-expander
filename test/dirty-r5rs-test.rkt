@@ -7,6 +7,7 @@
            "../clinger-rees-env.rkt")
   
   (define program '(
+;taken from http://okmij.org/ftp/Scheme/dirtier-macros.scm                    
 ;(module aaa)
 ; How to write dirty R5RS macros
 ; http://groups.google.com/groups?selm=87oflzcdwt.fsf%40radish.petrofsky.org
