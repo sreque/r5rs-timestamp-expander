@@ -1,33 +1,23 @@
-#lang racket
-(require racket rackunit
-         "../clinger-rees-syntax-rules.rkt"
-         "../clinger-rees-parser.rkt"
-         "../clinger-rees-env.rkt")
+(module clinger-rees-parser-test racket
+  (provide clinger-rees-parser-test)
+  (require racket rackunit
+           "../clinger-rees-syntax-rules.rkt"
+           "../clinger-rees-parser.rkt"
+           "../clinger-rees-env.rkt"
+           "clinger-rees-syntax-rules-test.rkt")
 
-;copy-pasted from clinger-rees-syntax-rules-test.rkt
-(define (string-prefix? string prefix)
-  (define end (string-length prefix))
-  (if (< (string-length string) end)
-      #f
-      (let loop ([idx 0])
-        (cond 
-          [(>= idx end) #t]
-          [(not (eqv? (string-ref string idx) (string-ref prefix idx))) #f]
-          [else (loop (add1 idx))]))))
-
-;copy-pasted from clinger-rees-syntax-rules-test.rkt
-(define (sym-matcher prefix-sym)
-  (define prefix (symbol->string prefix-sym))
-  (lambda (sym)
-    (string-prefix? (symbol->string sym) prefix)))
 (define-syntax check-syntax-error
   (syntax-rules ()
     [(_ action ...)
      (check-exn syntax-error? (lambda () action ...))]))
 
-;test that let-syntax returns the expected environment and body syntax
-;TODO test that the parsed macros actually work properly
-(let*-values
+  (define clinger-rees-parser-test
+    (test-suite
+     "clinger/rees parser test"
+     
+     ;test that let-syntax returns the expected environment and body syntax
+     ;TODO test that the parsed macros actually work properly
+     (let*-values
     ([(body-syntax)
       '(when #t
          (unless #f
@@ -352,7 +342,7 @@
             [(_ key val) (define key (lambda () val))]))
         (define-thunk a 1)
         (define-thunk b 2)
-        (display (+ (a) (b)))
+        #;(display (+ (a) (b)))
         (define another-value 10)
         (* another-value (a) (b)))]
      [(top-env expanded-syntax) (expand-program r5rs-top-level-env program)])
@@ -386,3 +376,4 @@
   (check-equal?
    (eval (call-with-values (λ () (expand-program r5rs-top-level-env '(`(1 ,(acos -1) ,@(map sqrt '(1 4 9 16 25)))))) (λ ls (caadr ls))) (make-base-namespace))
    '(1 3.141592653589793 1 2 3 4 5)))
+)))

@@ -1,10 +1,11 @@
-#lang racket
-(require racket rackunit
-         "../clinger-rees-syntax-rules.rkt"
-         "../clinger-rees-parser.rkt"
-         "../clinger-rees-env.rkt")
+(module ck_test racket
+  (provide ck-test)
+  (require racket rackunit
+           "test-utils.rkt"
+           "../clinger-rees-syntax-rules.rkt"
+           "../clinger-rees-parser.rkt"
+           "../clinger-rees-env.rkt")
 
-;this file tests that the expander works with an entire r5rs program.
 
 ;this program initially obtained from http://okmij.org/ftp/Scheme/CK.scm
 ; see http://okmij.org/ftp/Scheme/macros.html
@@ -227,80 +228,75 @@
     ((delete-assoc lst key) (ck () (c-quote (c-delete-assoc 'lst 'key))))))
 ))
 
-;We don't need to eval the expanded expressions because all the computation is done in the macros.
-(define (expand-expr syntax)
-  (define-values (te expanded) (expand-program top-env (list syntax)))
-  (set! top-env te)
-  (when (eqv? (caar expanded) 'begin) (set! expanded (cdar expanded))) ;one of our macro expansions is wrapping the result in a begin, which doesn't change things semantically
-  (cadar expanded)) ;this has to be cadar because what is being return is (list '(quote <expr>)). 
+  (make-expand-test-defs)
+  
+  (define-syntax test
+    (syntax-rules ()
+      [(_ expr expected)
+       (check-equal? (cadr (expand-expr (quote expr))) (quote expected))])) ;needs to be cadr because the macros also quote the output
+  
+  (define ck-test
+    (test-suite
+     "ck test"
+     
+     (expand-and-eval program)
 
-(define (test expr expected)
-  (check-equal? (expand-expr expr) expected))
-
-(define-values (top-env expanded) (expand-program r5rs-top-level-env program))
-(define ns (make-base-namespace))
-#;(eval `(begin ,@program) (make-base-namespace))
-#;(eval `(begin ,@expanded) ns)
-#;(for ([exp expanded])
-  (eval exp ns))
-(foldl (λ (v a) #;(display v) #;(display "\n") (eval v ns) ) (void) expanded)
-
-(test '(ck () (c-quote (c-append '(1 2 3) '(4 5)))) 
-              '(1 2 3 4 5))
+     (test (ck () (c-quote (c-append '(1 2 3) '(4 5)))) 
+           (1 2 3 4 5))
 
 
-(test '(ck () (c-quote (c-map '(c-cons '10) '((1) (2) (3) (4)))))
-               '((10 1) (10 2) (10 3) (10 4)))
+     (test (ck () (c-quote (c-map '(c-cons '10) '((1) (2) (3) (4)))))
+           ((10 1) (10 2) (10 3) (10 4)))
               
 
-(test '(ck () (c-quote (c-concatMap '(c-cons '10) '((1) (2) (3) (4)))))
-              '(10 1 10 2 10 3 10 4))
+     (test (ck () (c-quote (c-concatMap '(c-cons '10) '((1) (2) (3) (4)))))
+           (10 1 10 2 10 3 10 4))
 
-(test '(perm) '(()))
+     (test (perm) (()))
 
-(test '(perm 1) '((1)))
+     (test (perm 1) ((1)))
 
-(test '(perm 1 2) '((1 2) (2 1)))
+     (test (perm 1 2) ((1 2) (2 1)))
 
-(test '(perm 1 2 3) '((1 2 3) (2 1 3) (2 3 1) (1 3 2) (3 1 2) (3 2 1)))
+     (test (perm 1 2 3) ((1 2 3) (2 1 3) (2 3 1) (1 3 2) (3 1 2) (3 2 1)))
 
-(test 
- '(perm 1 2 3 4)
-'((1 2 3 4)
-  (2 1 3 4)
-  (2 3 1 4)
-  (2 3 4 1)
-  (1 3 2 4)
-  (3 1 2 4)
-  (3 2 1 4)
-  (3 2 4 1)
-  (1 3 4 2)
-  (3 1 4 2)
-  (3 4 1 2)
-  (3 4 2 1)
-  (1 2 4 3)
-  (2 1 4 3)
-  (2 4 1 3)
-  (2 4 3 1)
-  (1 4 2 3)
-  (4 1 2 3)
-  (4 2 1 3)
-  (4 2 3 1)
-  (1 4 3 2)
-  (4 1 3 2)
-  (4 3 1 2)
-  (4 3 2 1)))
+     (test 
+      (perm 1 2 3 4)
+      ((1 2 3 4)
+       (2 1 3 4)
+       (2 3 1 4)
+       (2 3 4 1)
+       (1 3 2 4)
+       (3 1 2 4)
+       (3 2 1 4)
+       (3 2 4 1)
+       (1 3 4 2)
+       (3 1 4 2)
+       (3 4 1 2)
+       (3 4 2 1)
+       (1 2 4 3)
+       (2 1 4 3)
+       (2 4 1 3)
+       (2 4 3 1)
+       (1 4 2 3)
+       (4 1 2 3)
+       (4 2 1 3)
+       (4 2 3 1)
+       (1 4 3 2)
+       (4 1 3 2)
+       (4 3 1 2)
+       (4 3 2 1)))
 
-(test '(ck () (c-quote (c-mul '(u u) '(u u u)))) '(u u u u u u))
+     (test (ck () (c-quote (c-mul '(u u) '(u u u)))) (u u u u u u))
+
+     (test (ck () (c-quote (c-fact '(u u u u)))) (u u u u u u u u u u u u u u u u u u u u u u u u))
 
 
-(test '(ck () (c-quote (c-fact '(u u u u)))) '(u u u u u u u u u u u u u u u u u u u u u u u u))
-
-
-(test '(delete-assoc
-        ((NEW-LEVEL-SEED . nls-proc)
-         (FINISH-ELEMENT . fe-proc)
-         (UNDECL-ROOT . ur-proc))
-        FINISH-ELEMENT)
-'((NEW-LEVEL-SEED . nls-proc)
-  (UNDECL-ROOT . ur-proc)))
+     (test (delete-assoc
+            ((NEW-LEVEL-SEED . nls-proc)
+             (FINISH-ELEMENT . fe-proc)
+             (UNDECL-ROOT . ur-proc))
+            FINISH-ELEMENT)
+           ((NEW-LEVEL-SEED . nls-proc)
+             (UNDECL-ROOT . ur-proc)))
+     )))

@@ -1,8 +1,10 @@
-#lang racket
-(require racket rackunit
-         "../clinger-rees-syntax-rules.rkt"
-         "../clinger-rees-parser.rkt"
-         "../clinger-rees-env.rkt")
+(module macro_lambda_test racket
+  (provide macro-lambda-test)
+  (require racket rackunit
+           "../clinger-rees-syntax-rules.rkt"
+           "../clinger-rees-parser.rkt"
+           "../clinger-rees-env.rkt"
+           "test-utils.rkt")
 
 (define program '(
 ;			Macro-lambda:
@@ -102,48 +104,37 @@
 
 ))
 
-(define (expand-expr syntax)
-  (define-values (te expanded) (expand-program top-env (list syntax)))
-  (set! top-env te)
-  expanded)
+  (make-expand-test-defs)
+  (define macro-lambda-test
+    (test-suite 
+     "macro lambda test"
+     (expand-and-eval program)
+     ; A few tests
+     ; This test is due to Al Petrofsky
+     (test-expand
+      (??!apply (??!lambda (x) '(a . b)) foo)
+      (a . b))
+     ;===evals-to===> '(a . b)
 
-(define ns (make-base-namespace))
-(define-syntax test
-  (syntax-rules ()
-    [(_ syntax expected)
-     (begin
-       (define expanded (expand-expr (quote syntax)))
-       (display expanded) (display "\n")
-       (check-equal? (eval `(begin ,@expanded) ns) (quote expected)))]))
+     (test-expand (??!apply (??!lambda (x) 
+                                (list (??!apply (??!lambda (x) (list '(??! x) 5 '(??! x))) (1 2))
+                                      '(??! x))) (3 4))
+                  (((1 2) 5 (1 2)) (3 4)))
+     ;===expands-to===> (list (list '(1 2) 5 '(1 2)) '(3 4))
+     ;===evals-to===> '(((1 2) 5 (1 2)) (3 4))
 
-(define-values (top-env expanded) (expand-program r5rs-top-level-env program))
-(eval `(begin ,@expanded) ns)
+     ; Another test due to Al Petrofsky
+     (test-expand
+      (??!apply (??!lambda (x) (let (((??! x) 1)) (??! x))) foo)
+      1)
+     ;===expands-to===> ((lambda (foo) foo) 1)
+     ;===evals-to===> 1
 
-; A few tests
-; This test is due to Al Petrofsky
-(test
- (??!apply (??!lambda (x) '(a . b)) foo)
- (a . b))
-;===evals-to===> '(a . b)
-
-(test (??!apply (??!lambda (x) 
-                           (list (??!apply (??!lambda (x) (list '(??! x) 5 '(??! x))) (1 2))
-                                 '(??! x))) (3 4))
-      (((1 2) 5 (1 2)) (3 4)))
-;===expands-to===> (list (list '(1 2) 5 '(1 2)) '(3 4))
-;===evals-to===> '(((1 2) 5 (1 2)) (3 4))
-
-; Another test due to Al Petrofsky
-(test
- (??!apply (??!lambda (x) (let (((??! x) 1)) (??! x))) foo)
- 1)
-;===expands-to===> ((lambda (foo) foo) 1)
-;===evals-to===> 1
-
-; Testing two-argument ??!lambda:
-(test
- (??!apply (??!lambda (x k) (??!apply (??! k) (+ 1 (??! x))))
-           4
-           (??!lambda (x) (??! x)))
- 5)
-;===evals-to===> 5`
+     ; Testing two-argument ??!lambda:
+     (test-expand
+      (??!apply (??!lambda (x k) (??!apply (??! k) (+ 1 (??! x))))
+                4
+                (??!lambda (x) (??! x)))
+      5)
+     ;===evals-to===> 5`
+     )))

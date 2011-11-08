@@ -1,9 +1,12 @@
-#lang racket
-(require racket rackunit
-         "../clinger-rees-syntax-rules.rkt"
-         "../clinger-rees-parser.rkt"
-         "../clinger-rees-env.rkt")
-(define program '(
+(module dirty_r5rs_test racket
+  (provide dirty-r5rs-test)
+  (require racket rackunit
+           "test-utils.rkt"
+           "../clinger-rees-syntax-rules.rkt"
+           "../clinger-rees-parser.rkt"
+           "../clinger-rees-env.rkt")
+  
+  (define program '(
 ;(module aaa)
 ; How to write dirty R5RS macros
 ; http://groups.google.com/groups?selm=87oflzcdwt.fsf%40radish.petrofsky.org
@@ -217,69 +220,75 @@
     ((_ (a ...) (x ...)) (id a ... x ...))))
 ))
 
-(define (expand-expr syntax)
-  (define-values (te expanded) (expand-program top-env (list syntax)))
-  (set! top-env te)
-  expanded)
 
-(define ns (make-base-namespace))
+  (make-expand-test-defs)
 
-(define-syntax test
-  (syntax-rules ()
-    [(_ syntax expected)
-     (begin
-       (define expanded (expand-expr (quote syntax)))
-       (display expanded) (display "\n")
-       (check-equal? (eval `(begin ,@expanded) ns) (quote expected)))]))
+  (define dirty-r5rs-test
+    (test-suite
+     "dirty r5rs test"
+     (expand-and-eval program)
+     
+     (test-expand
+      (make-env
+       (bind ((a 1)) (list (lookup a))))
+      (1))
+     
+     ;this seems to be broken even when run in racket
+     #;(printf 
+      "~a\n"
+      (expand-and-eval
+       (list '(make-env1
+              (bind (((a b c) 1)) (list (lookup a b c)))))))
 
-(define-values (top-env expanded) (expand-program r5rs-top-level-env program))
-(eval `(begin ,@expanded) ns)
-
-;this seems to be broken even when run in racket
-; (make-env1
-;  (bind (((a b c) 1)) (list (lookup a b c)))
-; )
-
-(test
- (make-env
-  (bind ((a 1)) (list (lookup a))))
-  (1))
-
-(test (make-env
-       (bind ((a 1)) (bind ((a 2)) (list (lookup a) (lookup a)))))
-      (2 2))
-
-
-(test 
- (make-env
-  (bind ((a 1))
-        (bind ((b 2))
-              (list (lookup a) (lookup b)
-                    (bind ((a 3))
-                          (list (lookup a) (lookup b)))))))
-  (1 2 (3 2)))
-
-(test
- ((make-env1
-   (lambda ((id a b c)) (id a b c))) '(1 2 3 4))
- (1 2 3 4))
-
-(test (((make-env1
-         (lambda ((id a b c)) (lambda ((id a b)) (list (id a b c) (id a b))))
-         ) 1) 2)
-      (1 2))
-
-(test
- (((make-env1
-    (lambda ((id a b c)) (lambda ((id a b)) 
-                           (list (id a b c) (id a b) '(id a b x) '(id a b) 'x)
-                           ))) 1) 2)
-    (1 2 ("a" "b" "x") ("a" "b") x))
-					       
-; (concat-ids (id a b c) (id x y z)) => (id a b c x y z)
-; For now assume that a, b, c, x, y, z are all distinct symbols
-
-(test ((((make-env1
+     (test-expand (make-env
+                   (bind ((a 1)) (bind ((a 2)) (list (lookup a) (lookup a)))))
+                  (2 2))
+     
+     
+     (test-expand
+      (make-env
+       (bind ((a 1))
+             (bind ((b 2))
+                   (list (lookup a) (lookup b)
+                         (bind ((a 3))
+                               (list (lookup a) (lookup b)))))))
+      (1 2 (3 2)))
+     
+     (test-expand
+      ((make-env1
+        (lambda ((id a b c)) (id a b c))) '(1 2 3 4))
+      (1 2 3 4))
+     
+     (test-expand (((make-env1
+                     (lambda ((id a b c)) (lambda ((id a b)) (list (id a b c) (id a b))))
+                     ) 1) 2)
+                  (1 2))
+     
+     (test-expand
+      (((make-env1
+         (lambda ((id a b c)) (lambda ((id a b)) 
+                                (list (id a b c) (id a b) '(id a b x) '(id a b) 'x)
+                                ))) 1) 2)
+      (1 2 ("a" "b" "x") ("a" "b") x))
+     
+     ; (concat-ids (id a b c) (id x y z)) => (id a b c x y z)
+     ; For now assume that a, b, c, x, y, z are all distinct symbols
+     
+     (test-expand ((((make-env1
+                      (let-syntax
+                          ((add-c
+                            (syntax-rules ()
+                              ((_ id a b) (id a b c)))))
+                        (lambda ((id a b c))
+                          (lambda ((id a b))
+                            (lambda ((id c))
+                              (list (id a b) (id c) (add-c id a b)))))
+                        )) 1) 2) 3)
+                  (2 3 1))
+     
+     (test-expand 
+      (((
+         (make-env1
           (let-syntax
               ((add-c
                 (syntax-rules ()
@@ -288,21 +297,7 @@
               (lambda ((id a b))
                 (lambda ((id c))
                   (list (id a b) (id c) (add-c id a b)))))
-            )) 1) 2) 3)
+            ))
+         1) 2) 3)
       (2 3 1))
-
-(test 
- (((
-    (make-env1
-     (let-syntax
-         ((add-c
-           (syntax-rules ()
-             ((_ id a b) (id a b c)))))
-       (lambda ((id a b c))
-        (lambda ((id a b))
-          (lambda ((id c))
-            (list (id a b) (id c) (add-c id a b)))))
-       ))
-    1) 2) 3)
- (2 3 1))
- 
+     )))

@@ -1,9 +1,11 @@
-#lang racket
-(require racket rackunit
-         "../clinger-rees-syntax-rules.rkt"
-         "../clinger-rees-parser.rkt"
-         "../clinger-rees-env.rkt")
-(define program '(
+(module dark_corner_test racket
+  (provide dark-corner-test)
+  (require racket rackunit
+           "test-utils.rkt"
+           "../clinger-rees-syntax-rules.rkt"
+           "../clinger-rees-parser.rkt"
+           "../clinger-rees-env.rkt")
+  (define program '(
 ;taken from http://okmij.org/ftp/Scheme/macros.html                  
 ; A dark, under-specified corner of R5RS macros
 ;
@@ -51,11 +53,13 @@
 (letrec1 ((x 1) (y 2)) (+ x y))
 ))
 
-(define-values (top-env expanded) (expand-program r5rs-top-level-env program))
-(printf "~a\n" expanded)
-(check-equal?
- (eval `(begin ,@expanded) (make-base-namespace))
- 3)
+  (make-expand-test-defs)
+  
+  (define dark-corner-test
+    (test-suite
+     "dark corner test"
+     (check-equal? (expand-and-eval program) 3))))
+
 ; If we load this code into Scheme48, we see the number "3" printed.
 ;
 ; SCM with a built-in macro-expander 
