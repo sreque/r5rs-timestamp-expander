@@ -1,8 +1,8 @@
 #lang racket
 (require
- "clinger-rees-parser.rkt"
- "clinger-rees-env.rkt"
- "test/test-utils.rkt")
+ "../clinger-rees-parser.rkt"
+ "../clinger-rees-env.rkt"
+ "../test/test-utils.rkt")
 
 (make-expand-test-defs)
 
@@ -25,7 +25,13 @@
   (collect-garbage)
   (time-apply code null))
 
-(define benchmark-dir (path->complete-path "benchmark_sources"))
+(define args (current-command-line-arguments))
+(define arg-len (vector-length args))
+
+(when (not (eqv? 1 arg-len))
+  (error (format "expected exactly one argument: got ~a" arg-len)))
+
+(define benchmark-dir (simplify-path (path->complete-path (vector-ref args 0))))
 
 (define sources 
   (filter
