@@ -121,7 +121,7 @@
        ))))
 
 
-(display "macro-expand-time environments")
+;(display "macro-expand-time environments")
 
 (make-env
  (bind ((a 1)) (list (lookup a)))
@@ -263,7 +263,7 @@
        (list (id a b) (id c) (add-c id a b)))))
 ))
 
-(display (((
+(define result (((
 (make-env1
  (let-syntax
      ((add-c

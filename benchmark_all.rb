@@ -1,4 +1,4 @@
-FloatRegex = /[-+]?(?:\d+(?:\.\d*)?|\.\d+)/
+FloatRegex = /[-+]?(?:\d+(?:\.\d*)?|\.\d+)|unknown/
 BenchmarkLineRegex = /^([^:]+): real=(#{FloatRegex})s\s+cpu=(#{FloatRegex})s\s+gc=(#{FloatRegex})s\s*$/
 require 'csv'
 class BenchmarkRunner
@@ -20,7 +20,7 @@ class BenchmarkRunner
     Thread.new do
       stdin_read.each_line do |line|
         if line =~ BenchmarkLineRegex
-          result[File.basename($1)] = [$2, $3, $4].map{|v| Float(v) }
+          result[File.basename($1)] = [$2, $3, $4].map{|v| v == "unknown" ? "unknown" : Float(v) }
         else
           puts "unrecognized line: #{line}"
         end
@@ -54,6 +54,17 @@ class ChickenRunner < BenchmarkRunner
   end
 end
 
+class GambitRunner < BenchmarkRunner
+  def mk_cmd(benchmark_dir)
+    %W!gsi -:s #{prog_path} #{benchmark_dir}!
+  end
+end
+
+class BiglooRunner < BenchmarkRunner
+  def mk_cmd(benchmark_dir)
+    %W!bigloo -i #{prog_path} #{benchmark_dir}!
+  end
+end
 if __FILE__ == $0
   script_dir = File.dirname(__FILE__)
   prog_dir = File.join(script_dir, 'benchmarkers')
@@ -63,6 +74,7 @@ if __FILE__ == $0
     RacketRunner.new(File.join(prog_dir, 'clinger-rees.rkt')),
     PetiteRunner.new(File.join(prog_dir, 'chez.ss')),
     ChickenRunner.new(File.join(prog_dir, 'chicken.ss')),
+    GambitRunner.new(File.join(prog_dir, 'gambit.ss')),
   ]
   all_benchmarks = %W!rkt scm ss!.map {|ext| Dir.glob("#{benchmark_dir}/**/*.#{ext}") }.flatten.map {|v| File.basename(v) }
   results = runners.map {|runner| [File.basename(runner.prog_path), runner.run(benchmark_dir)]}

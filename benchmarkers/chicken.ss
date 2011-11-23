@@ -10,7 +10,7 @@
     #f
     (let loop ((idx (sub1 str-len)) 
                (sfx-idx (sub1 sfx-len)))
-      (if (< 0 sfx-idx)
+      (if (< sfx-idx 0)
         #t
         (if (not (char=? (string-ref str idx) (string-ref sfx sfx-idx)))
           #f
