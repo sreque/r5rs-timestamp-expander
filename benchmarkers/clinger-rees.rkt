@@ -2,7 +2,10 @@
 (require
  "../clinger-rees-parser.rkt"
  "../clinger-rees-env.rkt"
- "../test/test-utils.rkt")
+ "../test/test-utils.rkt"
+ profile
+ (prefix-in profile:graphviz: profile/render-graphviz)
+ (prefix-in profile:text: profile/render-text))
 
 (make-expand-test-defs)
 
@@ -42,12 +45,19 @@
          (void)))))
 
 #;(printf "~a\n" sources)
+(define (main)
+  (for ([v sources])
+    (match-define (cons path code) v)
+    (define-values (_ cpu real gc) (benchmark (λ () (call-with-values (λ () (expand-program r5rs-top-level-env code)) list)) 0))
+    (printf "~a: real=~as cpu=~as gc=~as\n" (find-relative-path benchmark-dir path) (/ real 1000.0) (/ cpu 1000.0) (/ gc 1000.0))))
 
-(for ([v sources])
-  (match-define (cons path code) v)
-  (define-values (_ cpu real gc) (benchmark (λ () (call-with-values (λ () (expand-program r5rs-top-level-env code)) list)) 0))
-  (printf "~a: real=~as cpu=~as gc=~as\n" (find-relative-path benchmark-dir path) (/ real 1000.0) (/ cpu 1000.0) (/ gc 1000.0)))
-  
+#;(profile-thunk main
+         #:delay 0.01
+         #:repeat 5
+         #:render profile:graphviz:render)
+
+(main)
+
 #;(define sieve-code 
   (call-with-input-file
    "benchmark_sources/sieve-stress-test.scm"
