@@ -30,6 +30,16 @@
   
   (struct denotation (id) #:transparent)
   
+  (define (merge-match-results-lazy matcher-list syntax-list use-env)
+    (let/ec break
+      (for/fold ([cur-env (hash)])
+        ((m matcher-list)
+         (s syntax-list))
+        (define match-result (m s use-env))
+        (if (pattern-mismatch? match-result)
+            (break match-result)
+            (merge-envs cur-env match-result)))))
+  
   (define (merge-match-results seq)
     (let/ec break
       (for/fold ((cur-env (hash)))
@@ -44,8 +54,8 @@
     (define (invoke-loop cur-value arg-lists)
       (loop (apply proc 
                    (cons cur-value 
-                         (map (lambda (v) (car v)) arg-lists))
-                   (map (lambda (v) (cdr v)) arg-lists))))
+                         (for/list ([v arg-lists]) (car v)))
+                   (for/list ([v arg-lists]) (cdr v)))))
     
     (define (loop cur-value lists)
       (if (memv '() lists)
@@ -97,8 +107,8 @@
     (when (not (or (cons? ls) (null? ls)))
       (raise "invalid argument: must be a cons or null"))
     (let loop ([count 0] [cur ls])
-      (cond
-        [(cons? cur) (loop (add1 count) (cdr cur))]
+      (match cur
+        [(cons _ rest) (loop (add1 count) rest)]
         [else count])))
   
   ;attempts to split a list. On failure, returns a pattern mismatch object
@@ -144,17 +154,24 @@
           result1 
           (match-merge-static-helper result1 expr-rest ...)))]))
   
+  (define (improper-length ls)
+    (let loop ([cur ls] [count 0])
+      (match cur
+        [(cons _ rest) (loop rest (add1 count))]
+        ['() count]
+        [else (- (add1 count))])))
   ;matches all values in pattern-list against all syntax elements of syntax-list. 
   ;Both should be lists of the same size.
   (define (multi-match parent-pattern matcher-list syntax-list init-value use-env)
-    (if (not (list? syntax-list))
-        (pattern-mismatch parent-pattern syntax-list (format "syntax not a list: ~a" syntax-list))
-        (if (not (eqv? (length matcher-list) (length syntax-list)))
-            (pattern-mismatch (input-pattern-source parent-pattern) syntax-list 
-                              (format "arity mismatch\n  pattern:~a\n  syntax:~a" parent-pattern syntax-list))
-            (merge-match-results
-             ;I would like to make this lazy with stream-map, but stream-map only takes one argument list
-             (map (lambda (m s) (m s use-env)) matcher-list syntax-list)))))        
+    (define len (improper-length syntax-list))
+    (cond 
+      [(< len 0)
+       (pattern-mismatch parent-pattern syntax-list (format "syntax not a proper list: ~a" syntax-list))]
+      [(not (eqv? (length matcher-list) len))
+       (pattern-mismatch (input-pattern-source parent-pattern) syntax-list 
+                              (format "arity mismatch\n  pattern:~a\n  syntax:~a" parent-pattern syntax-list))]
+      [else
+       (merge-match-results-lazy matcher-list syntax-list use-env)]))
   
   ;TODO cache this in ellipses-list so we don't recalculate it over and over
   (define (pattern-ids-in-pattern _pattern)
@@ -198,7 +215,8 @@
           ((input-pattern-source pattern) syntax (length sub-patterns))
           (fixed-syntax variable-syntax)
           (match-merge-static 
-           (merge-match-results
+           (merge-match-results-lazy sub-matchers fixed-syntax use-env)
+           #;(merge-match-results
             ;TODO make lazy?
             (map (lambda (m s) (m s use-env)) sub-matchers fixed-syntax))
            (ellipses-match ellipses-matcher variable-syntax use-env pattern-ids)))
@@ -212,7 +230,8 @@
           ((input-pattern-source pattern) syntax (length sub-patterns))
           (fixed-syntax end-syntax)
           (match-merge-static
-           (merge-match-results
+           (merge-match-results-lazy sub-matchers fixed-syntax use-env)
+           #;(merge-match-results
             ;TODO make lazy?
             (map (lambda (m s) (m s use-env)) sub-matchers fixed-syntax))
            (tail-matcher end-syntax use-env))))]
@@ -265,23 +284,24 @@
   ;which would also verify no pattern variable duplication for free
   (define (parse-transformer-pattern syntax literal-identifiers)
     (define (parse-list parsed-stack remaining-list)
-      (cond
-        [(empty? remaining-list)
+      (match remaining-list
+        ['()
          (fixed-list syntax (reverse parsed-stack))]
-        [(cons? remaining-list)
-         (define-values (first rest) (values (car remaining-list) (cdr remaining-list)))
+        [(cons first rest)
          (cond           
            [(eqv? first '...) 
             (if (not (empty? rest))
                 (raise-syntax-error#
                  syntax
                  "ellipses must occur at the end of a syntax list")
-                (if (empty? parsed-stack)
-                    (raise (syntax-error 
-                            "ellipses must occur after a pattern inside of a syntax list"
-                            (current-continuation-marks)
-                            syntax))
-                    (ellipses-list syntax (reverse (cdr parsed-stack)) (car parsed-stack))))]
+                (match parsed-stack
+                  [(cons car-parsed-stack cdr-parsed-stack)
+                   (ellipses-list syntax (reverse cdr-parsed-stack) car-parsed-stack)]
+                  [else
+                   (raise (syntax-error 
+                           "ellipses must occur after a pattern inside of a syntax list"
+                           (current-continuation-marks)
+                           syntax))]))]
            [else
             (parse-list 
              (cons (parse-transformer-pattern first literal-identifiers) parsed-stack)
@@ -351,11 +371,10 @@
   (define (parse-transformer-template syntax pattern-nestings #:outer-ellipses-nesting (outer-ellipses-nesting 0))
     (define (parse-list parsed-stack remaining-list)
       #;(printf "  parse-list: ~a ~a\n" parsed-stack remaining-list)
-      (cond
-        [(null? remaining-list)
+      (match remaining-list
+        ['()
          (template-list syntax (reverse parsed-stack))]
-        [(cons? remaining-list)
-         (define first (car remaining-list))
+        [(cons first _rest)
          (cond
            [(eqv? '... first)
             (raise (syntax-error 
@@ -365,10 +384,12 @@
            [else
             (define-values (ellipses-count rest)
               (let loop ([ellipses-count 0]
-                         [rest (cdr remaining-list)])
-                (if (or (null? rest) (not (cons? rest)) (not (eqv? (car rest) '...)))
-                    (values ellipses-count rest)
-                    (loop (add1 ellipses-count) (cdr rest)))))
+                         [rest _rest])
+                (match rest
+                  [(cons '... __rest)
+                   (loop (add1 ellipses-count) __rest)]
+                  [else
+                   (values ellipses-count rest)])))
             (define new-outer-ellipses-nesting (+ outer-ellipses-nesting ellipses-count))
             (define inner-template
               (parse-transformer-template first pattern-nestings #:outer-ellipses-nesting new-outer-ellipses-nesting))
@@ -451,10 +472,11 @@
               (dfs (fixed-list syntax sub-patterns) prev-seen ellipses-level)
               (add1 ellipses-level))]
         [(fixed-list syntax sub-patterns)
-         (if (empty? sub-patterns)
-             prev-seen
-             (dfs (fixed-list syntax (cdr sub-patterns))
-                  (dfs (car sub-patterns) prev-seen ellipses-level) ellipses-level))]
+         (match sub-patterns
+           [(cons first rest)
+            (dfs (fixed-list syntax rest)
+                  (dfs first prev-seen ellipses-level) ellipses-level)]
+           [else prev-seen])]
         [(datum _) prev-seen]))
     (dfs top-pattern (hash) 0))
   
@@ -470,8 +492,7 @@
         [(ellipses-template _ inner _ _ _ _)
          (dfs inner result)]
         [(template-list _ inner-templates)
-         (foldl (lambda (sub-t r) (dfs sub-t r))  result inner-templates)
-         ]
+         (for/fold ([r result]) ((sub-t inner-templates)) (dfs sub-t r))]
         [(improper-template-list _ ts tail)
          (for/fold ((r (dfs tail result))) ((t ts)) (dfs t r))]
         [(template-datum _) result]))
@@ -487,23 +508,23 @@
   (define (flatten# lst depth)
     #;(printf "flattening ~a ~a levels\n" lst depth)
     (define (recur k lst depth)
-      (if (null? lst)
-          (k)
-      (let ()    
-        (define rest (cdr lst))
-        (define sub-k
-          (if (null? rest)
-              k
-              (lambda () (recur k rest depth))))
-        (body sub-k (car lst) (sub1 depth)))))
+      (match lst
+        [(cons first rest)    
+         (define sub-k
+           (if (null? rest)
+               k
+               (lambda () (recur k rest depth))))
+         (body sub-k first (sub1 depth))]
+        [else (k)]))
     (define (body k lst depth)
       #;(printf "flatten#-body lst=~a depth=~a\n" lst depth)
       (if 
        (<= depth 0)
        (let loop ([cur lst])
-         (if (null? cur)
-             (k)
-             (cons (car cur) (loop (cdr cur)))))
+         (match cur
+           [(cons first rest)
+            (cons first (loop rest))]
+           [else (k)]))
        (recur k lst depth)))
     (if (or (null? lst) (<= depth 0))
         lst
@@ -535,14 +556,16 @@
 
   ;checks that each value in xss is of the same length as the rest
   (define (check-lengths xss source)
-    (when (not (null? xss))
-      (let* ([l1 (length (car xss))] [s (set l1)])
-        (for ([xs (cdr xss)])
-          (unless (set-member? s (length xs))
-            (raise-syntax-error#
-             source
-             (format "template values length mismatch: values=~a\nsyntax=~a" xss source))))
-        l1)))
+    (match xss
+      [(cons first rest)
+       (let* ([l1 (length first)] [s (set l1)])
+         (for ([xs rest])
+           (unless (set-member? s (length xs))
+             (raise-syntax-error#
+              source
+              (format "template values length mismatch: values=~a\nsyntax=~a" xss source))))
+         l1)]
+      [else (void)]))
   
   ;Checks that a value is true and raises an error if it is not.
   (define-syntax assert
@@ -570,7 +593,7 @@
         (if (eqv? depth 0) (cons v result) result)))
     (define lengths (check-lengths no-reps source))
     (when (and (> ellipses-count 1) (> lengths 0))
-      (define new-rep-depths (map (λ (v) (if (eqv? v 0) 0 (sub1 v))) rep-depths))
+      (define new-rep-depths (for/list ([v rep-depths]) (if (eqv? v 0) 0 (sub1 v))))
       (let loop ([child-cdrs vals] 
                  [vals-left (sub1 lengths)])
         (define child-cars 
@@ -669,28 +692,28 @@
              (func (hash-ref (hash-ref sub-map id) depth))))
          #;(printf "xss=~a sub-map-additions=~a id-depths=~a sub-map=~a anchor-ids=~a source=~a\n" xss sub-map-additions id-depths sub-map anchor-ids source)
          ;This is where we invoke our inner template multiple times using augmented substitution maps.
-         (map 
-          (lambda (args)
-            (define _sub-map
-              (for/fold ([_sub-map sub-map]) 
-                ((arg args) (add-info sub-map-additions))
-                (if (null? add-info)
-                    _sub-map
-                    (let () 
-                      (match-define (list id depth rep-depth f) add-info)
-                      (hash-set _sub-map id (hash-set (hash-ref _sub-map id (hash)) (+ (- depth ellipses-count) rep-depth) arg))))))
-            (inner-rewriter _sub-map)) (list-transpose xss)))]
+         (for/list
+             ([args (list-transpose xss)])
+           (define _sub-map
+             (for/fold ([_sub-map sub-map]) 
+               ((arg args) (add-info sub-map-additions))
+               (if (null? add-info)
+                   _sub-map
+                   (let () 
+                     (match-define (list id depth rep-depth f) add-info)
+                     (hash-set _sub-map id (hash-set (hash-ref _sub-map id (hash)) (+ (- depth ellipses-count) rep-depth) arg))))))
+           (inner-rewriter _sub-map)))]
       [(template-list _ inner-templates)
        (list-fuser
-        (map (lambda (t) (recur t)) inner-templates)
-        (map (lambda (t) (rewriter-fuser t)) inner-templates)
+        (for/list ([t inner-templates]) (recur t))
+        (for/list ([t inner-templates]) (rewriter-fuser t))
         (lambda (ignore) '()))]
       [(improper-template-list source sub-templates tail-template)
        (define tail-rewriter (recur tail-template))
        (list-fuser
-        (map (lambda (t) (recur t)) sub-templates)
-        (map (lambda (t) (rewriter-fuser t)) sub-templates)
-        (lambda (sub-map) (tail-rewriter sub-map)))]
+        (for/list ([t sub-templates]) (recur t))
+        (for/list ([t sub-templates]) (rewriter-fuser t))
+        tail-rewriter)]
       [(template-datum d) 
        (lambda (ignored) d)]))
   
@@ -731,26 +754,26 @@
                 "malformed syntax-rules syntax. Got a non-list value for the list of pattern-template pairs: ~a" 
                 syntax)))
       (for/list ([s syntax])
-        (when (not (list? s))
-          (error (format "Expected a list containing a pattern and template, got a non-list value: ~a" syntax)))
-        (when (not (eqv? 2 (length s)))
-          (error (format "pattern and template list is not of length 2: ~a" s)))
-        (when (not (or (cons? (car s)) (null? (car s))))
-          (error (format "syntax-rules pattern must be a list: ~a" (car s))))
-        (when (empty? (car s))
-          (error (format "syntax-rules pattern must be nonempty: ~a" s)))
-        (when (not (symbol? (caar s)))
-          (error (format "syntax-rules pattern must begin with an identifier: ~a" s)))
-        (parse-syntax-rule (cdar s) (cadr s) def-env literal-ids)))
-    (when (or (null? syntax)
-              (null? (cdr syntax))
-              (not (list? (cddr syntax))))
-      (error "syntax-rules must contain at least a literals list"))
-    (when (not (equal? (env-lookup def-env (car syntax)) (denotation 'syntax-rules)))
-      (error (format "the first identifier of syntax-rules syntax must be the symbol 'syntax-rules: got ~a" (car syntax))))
-    (define literals (parse-literals (cadr syntax)))
-    (define rules (parse-pattern/template-pairs (cddr syntax) literals))
-    rules)
+        (match s
+          [(list pattern template)
+           (match pattern
+             [(cons pattern-first pattern-rest)
+              (if (not (symbol? pattern-first))
+                (error (format "syntax-rules pattern must begin with an identifier: ~a" s))
+                (parse-syntax-rule pattern-rest template def-env literal-ids))]
+             [else
+              (error (format "syntax-rules pattern must be a non-empty list. Got: ~a" pattern))])]
+          [else
+           (error (format "Expected a list of length 2 containing a pattern and template, got: ~a" syntax))])))
+    (match syntax
+      [(cons head (cons literal-ids pairs))
+       (when (not (equal? (env-lookup def-env head) (denotation 'syntax-rules)))
+         (error (format "the first identifier of syntax-rules syntax must be the symbol 'syntax-rules: got ~a" head)))
+       (define literals (parse-literals literal-ids))
+       (define rules (parse-pattern/template-pairs pairs literals))
+       rules]
+      [else
+       (error "Expected a syntax-rules form containing a literals list and 0 or more pattern/template pairs. Got: ~a" syntax )]))
   
   ;Converts a list of rules into a single macro transformer function
   ; (list[rule]) -> (syntax, hash-table, hash-table) -> (syntax, hash-table, hash-table)
@@ -791,18 +814,18 @@
     (if (null? syntax-rules)
         (lambda (syntax use-env orig-sym-env) (error "no rules provided, which means the macro invocation always fails"))
         (lambda (syntax use-env orig-sym-env)
+          (define rest-syntax (cdr syntax))
           (let loop 
             ((match-failures '())
              (rem-rules syntax-rules))
-            (if (empty? rem-rules)
-                (error (format "match failed\nsyntax: ~a\nmatch errors: ~a" syntax (reverse match-failures)))
-                (let* ([rule (car rem-rules)]
-                       [match ((syntax-rule-matcher rule) (cdr syntax) use-env)])
-                  (if (pattern-mismatch? match)
-                      (loop (cons match match-failures)
-                            (cdr rem-rules))
-                      (rewrite rule syntax use-env match orig-sym-env)))))))) 
-  
+            (match rem-rules
+              [(cons rule rest)
+               (let* ([match ((syntax-rule-matcher rule) rest-syntax use-env)])
+                 (if (pattern-mismatch? match)
+                      (loop (cons match match-failures) rest)
+                      (rewrite rule syntax use-env match orig-sym-env)))]
+              [else
+               (error (format "match failed\nsyntax: ~a\nmatch errors: ~a" syntax (reverse match-failures)))])))))
   (define (parse-syntax-transformer syntax def-env)
     (make-macro-transformer
      (parse-syntax-rules syntax def-env)))

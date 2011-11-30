@@ -52,9 +52,9 @@
     (printf "~a: real=~as cpu=~as gc=~as\n" (find-relative-path benchmark-dir path) (/ real 1000.0) (/ cpu 1000.0) (/ gc 1000.0))))
 
 #;(profile-thunk main
-         #:delay 0.01
+         #:delay 0.005
          #:repeat 5
-         #:render profile:graphviz:render)
+         #:render profile:text:render)
 
 (main)
 

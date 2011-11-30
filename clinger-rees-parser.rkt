@@ -7,18 +7,12 @@
   ;(define (syntax-definition? form)
     
   (define (verify-binding-form-shape binding-form)
-    (when (not (list? binding-form))
-        (raise-syntax-error#
-         binding-form
-         "binding form must be a list"))
-    (when (not (eqv? 2 (length binding-form)))
-      (raise-syntax-error#
-       binding-form
-       "binding form must be a list of length 2"))
-    (when (not (symbol? (car binding-form)))
-      (raise-syntax-error#
-       (car binding-form)
-       "first value of binding form must be an identifier"))
+    (match binding-form
+      [(list (? symbol?) _) (void)]
+      [else
+       (raise-syntax-error#
+        binding-form
+        "binding form must be a list of length 2 whose first value is an identifier")])
     ;parse-syntax-rules already throws exceptions with human-readable error messages. 
     ;I should factor that code out into a separate verify method
     #;(when not (syntax-definition? (cadr binding-form))        
@@ -27,16 +21,18 @@
        "second value of binding form must be a syntax definition")))
   
   (define (verify-syntax-binding-shape syntax form-name)
-    (when (< (length syntax) 2)
-        (raise-syntax-error# 
+    (match syntax
+      [(cons first (cons _ _))
+       (when (not (list? first))
+         (raise-syntax-error#
+          first
+          (format "first argument to ~a must be a list" form-name)))
+       (for ([binding-form first])
+         (verify-binding-form-shape binding-form))]
+      [else
+       (raise-syntax-error# 
          syntax
-         (format "expected at least 2 arguments to ~a, got ~a" form-name (length syntax))))
-    (when (not (list? (car syntax)))
-      (raise-syntax-error#
-       (car syntax)
-       (format "first argument to ~a must be a list" form-name)))
-    (for ([binding-form (car syntax)])
-      (verify-binding-form-shape binding-form)))
+         (format "expected at least 2 arguments to ~a, got ~a" form-name (length syntax)))]))
     
   (define (reduce-let-syntax syntax def-env)
     (verify-syntax-binding-shape syntax "let-syntax")
@@ -62,7 +58,8 @@
     (let* ([binding-forms (car syntax)]
            [ref-map
             (for/hash ((binding-form binding-forms))
-              (values (car binding-form) (box (make-premature-use-macro (car binding-form)))))]
+              (define first (car binding-form))
+              (values first (box (make-premature-use-macro first))))]
            [extended-env 
             (for/fold ([result def-env])
               ((binding-form binding-forms))
@@ -90,11 +87,11 @@
              (format "invalid argument to a formals list: `~a'. All members should be identifiers" v))))
       (let loop ([rem formals]
                  [ids (set)])
-        (if  (or (cons? rem) (null? rem))
-             (if (empty? rem)
-                 ids
-                 (loop (cdr rem) (add-id ids (car rem))))
-             (add-id ids rem))))
+        (match rem
+          [(cons first rest)
+           (loop rest (add-id ids first))]
+          ['() ids]
+          [else (add-id ids rem)])))
   
   ;verifies the shape of the lambda form and returns the set of identifiers the form binds
   ; if this function ever became part of something other than an expander, it could be modified
@@ -119,26 +116,29 @@
   
   ;verifies that a define is shaped correctly and then returns the identifier the define binds
   (define (verify-define-shape syntax)
-    (cond
-      [(< (length syntax) 2)
+    (match syntax
+      [(cons head (cons head2 rest))
+       (match head
+         [(? symbol?)
+          (if (null? rest)
+              head
+              (raise-syntax-error#
+            syntax
+            "define form with one variable as its first argument must have exactly one expression following the identifier"))]
+         [(cons car-head _)
+          car-head]
+         ['{}
+          (raise-syntax-error#
+            syntax
+            "The first argument to a define form, if a list, must contain at least one identifier")]
+         [else
+          (raise-syntax-error# 
+             syntax
+             "First argument to a define form must be an identifier or a list of an identifier prepended to a formals list")])]
+      [else
        (raise-syntax-error#
         syntax
-        "define form does not have the required arguments")]
-      [(symbol? (car syntax))
-       (if (or (null? (cdr syntax)) (not (null? (cddr syntax))))
-           (raise-syntax-error#
-            syntax
-            "define form with one variable as its first argument must have exactly one expression following the identifier")
-           (car syntax))]
-      [(cons? (car syntax))
-       (if (null? (car syntax))
-           (raise-syntax-error#
-            syntax
-            "The first argument to a define form, if a list, must contain at least one identifier")
-           (caar syntax))]
-      [else (raise-syntax-error# 
-             syntax
-             "First argument to a define form must be an identifier or a list of an identifier prepended to a formals list")]))
+        "define form does not have the required arguments")]))
   
   (define (parse-define syntax)
     (define id (verify-define-shape syntax))
@@ -165,10 +165,9 @@
       [else local-denotation])) ;bound locally, therefore return local binding
          
   (define (unquote-syntax syntax quote-env)
-    (define rcurried (λ (s) (unquote-syntax s quote-env)))
     (cond
-      [(list? syntax)   (map rcurried syntax)]
-      [(vector? syntax) (vector-map rcurried syntax)]
+      [(list? syntax)   (for/list ([s syntax]) (unquote-syntax s quote-env))]
+      [(vector? syntax) (for/vector ((s syntax)) (unquote-syntax s quote-env))]
       [(symbol? syntax) (let loop ([s syntax]) 
                           (define new-s (hash-ref quote-env s (void)))
                           (if (void? new-s) s (loop new-s)))]
@@ -202,9 +201,9 @@
     ;it has to expand and rewrite everything all the way because we throw away the syntactic environment at the end of this function call
     (define (handle-macro-use macro use-syntax local-env quote-env)
       (define-values (new-syntax new-local-env new-quote-env) (macro use-syntax local-env quote-env))
-      (cond
-        [(and (cons? new-syntax) (symbol? (car new-syntax)))
-         (define-values (denotation denotes-keyword?) (get-denotation-and-keyword-predicate (car new-syntax) top-env new-local-env))
+      (match new-syntax
+        [(cons (? symbol? symbol) _)
+         (define-values (denotation denotes-keyword?) (get-denotation-and-keyword-predicate symbol top-env new-local-env))
          (cond
            [(procedure? denotation)
             #;(printf "invoking macro ~a on ~a\n" (car new-syntax) new-syntax)
@@ -215,15 +214,14 @@
          #;(printf "after using macro ~a to expand ~a to ~a, recursively epxanding with new-local-env=~a\n" denotation use-syntax new-syntax new-local-env)
           (partially-expanded new-syntax new-local-env new-quote-env)]))
     (define (loop defines-list rem-list)
-      (define app-pred (λ (v) (and (cons? v) (symbol? (car v)))))
+      (define app-pred (λ (v) (match v [(cons (? symbol?) _) #t] [else #f])))
       (define super-app-pred (λ (v) (or (app-pred v) (and (partially-expanded? v) (app-pred (partially-expanded-syntax v))))))
-      (cond 
-        [(empty? rem-list)
+      (match rem-list 
+        ['()
          (raise-syntax-error#
           syntax-list
           (format "body must contain at least one expression that is not a define. defines-list=~a" defines-list))]
-        [(super-app-pred (car rem-list))
-         (define app-expr-pre (car rem-list))
+        [(cons (? super-app-pred app-expr-pre) cdr-rem-list)
          (define pre-expanded? (partially-expanded? app-expr-pre))
          (define app-expr (if pre-expanded? (partially-expanded-syntax app-expr-pre) app-expr-pre))
          (define-values (le qe) 
@@ -243,22 +241,22 @@
          (cond
            [(denotes-keyword? 'define)
             (define-values (id value) (parse-define (cdr app-expr)))
-            (loop (cons (list id (syntax-wrapper value)) defines-list) (cdr rem-list))]
+            (loop (cons (list id (syntax-wrapper value)) defines-list) cdr-rem-list)]
            [(denotes-keyword? 'begin)            
-            (loop defines-list (append (map syntax-wrapper (cdr app-expr)) (cdr rem-list)))]
+            (loop defines-list (append (map syntax-wrapper (cdr app-expr)) cdr-rem-list))]
            [(procedure? denotation)
             #;(printf "invoking macro ~a on ~a\n" symbol app-expr)
-            (loop defines-list (cons (handle-macro-use denotation app-expr le qe) (cdr rem-list)))]
+            (loop defines-list (cons (handle-macro-use denotation app-expr le qe) cdr-rem-list))]
            [else
             (define-values (new-syntax new-local-env new-quote-env)
               (rewrite-inner-body-syntax defines-list rem-list local-env quote-env))
             #;(printf "new syntax: ~a\n" new-syntax)
-            (map (λ (v) (inner-expander v top-env new-local-env new-quote-env)) new-syntax)])]
+            (for/list ([v new-syntax]) (inner-expander v top-env new-local-env new-quote-env))])]
         [else
          (define-values (new-syntax new-local-env new-quote-env)
            (rewrite-inner-body-syntax defines-list rem-list local-env quote-env))
          #;(printf "new syntax: ~a\n" new-syntax)
-         (map (λ (v) (expand-inner-syntax v top-env new-local-env new-quote-env)) new-syntax)]))
+         (for/list ([v new-syntax]) (expand-inner-syntax v top-env new-local-env new-quote-env))]))
     #;(printf "Expanding body syntax: ~a\n" syntax-list)
     (loop '() syntax-list))
   
@@ -299,19 +297,18 @@
       (syntax-rules ()
         [(_ s le qe) (expand-inner-syntax s top-env le qe #:at-top-level at-top-level)]))
     (define (handle-list)
-      (cond
-        [(empty? syntax)
+      (match syntax
+        ['()
          (raise-syntax-error#
           syntax
           "illegal empty list")]
-        [(symbol? (car syntax))
-         (handle-symbol-application)]
-        [(cons? (car syntax)) (handle-procedure-application)]
+        [(cons (? symbol?) _) (handle-symbol-application)]
+        [(cons (cons _ _) _) (handle-procedure-application)]
         [else (raise-syntax-error#
                 syntax
                 "head value cannot possibly be a procedure")]))
     (define (handle-procedure-application)
-      (map (lambda (child-syntax) (recur child-syntax local-env quote-env)) syntax))
+      (for/list ([child-syntax syntax]) (recur child-syntax local-env quote-env)))
     ;this will reduce the syntax to its body and expanded environment and then expand the environment
     ;The return value is a single piece of syntax, either a begin or letrec expression
     (define (handle-local-syntax-extension reducer)
@@ -349,14 +346,12 @@
            ,(if (empty? (cadr syntax)) '() (recur (cadr syntax) new-local-env quote-env)) ;we expand inner syntax here simply to do simple identifier rewrites
           ,@(expand-inner-body-syntax  body-syntax top-env new-local-env quote-env))]
         [(denotes-keyword? 'quote)
-         (if (or
-              (null? (cdr syntax))
-              (not (cons? (cdr syntax)))
-              (not (null? (cddr syntax))))
-             (raise-syntax-error#
+         (match syntax
+           [(list sym arg) (unquote-syntax syntax quote-env)]
+           [else
+            (raise-syntax-error#
               syntax
-              "Quote form must contain exactly one argument")
-             (unquote-syntax syntax quote-env))]
+              "Quote form must contain exactly one argument")])]
         [(procedure? denotation) 
          #;(printf "invoking macro ~a on ~a\n" symbol syntax)
          (define-values (expanded-syntax expanded-local-env expanded-quote-env) 
@@ -411,35 +406,33 @@
   (define (expand-top-level-form top-env sexp)
     (define (expand-default)
       (expand-inner-syntax sexp top-env (hash) (hash) #:at-top-level #t))
-    (cond
-      [(and (cons? sexp) (symbol? (car sexp)))
-       (define symbol (car sexp))
-       (define contents (cdr sexp))
+    (match sexp
+      [(cons (? symbol? symbol) contents)
        (define-values (denotation denotes-keyword?) (get-denotation-and-keyword-predicate symbol top-env (hash)))
        (cond
          [(denotes-keyword? 'define)
-          (define-values (id body) (parse-define (cdr sexp)))
+          (define-values (id body) (parse-define contents))
           (define new-top-env (hash-set top-env id id))
           (values new-top-env `(define ,id ,(expand-inner-syntax body new-top-env (hash) (hash))))]
          [(denotes-keyword? 'define-syntax)
-          (define rest (cdr sexp))
-          (when (not (and (cons? rest) (symbol? (car rest)) (cons? (cdr rest)) (null? (cddr rest))))
-            (raise-syntax-error#
+          (define rest contents)
+          (match contents
+            [(list (? symbol? keyword) transformer-spec)
+             (let*
+                 ;so the way things are implemented, recursive macros break if the identifier the macro was bound to is changed to refer to something else.
+                 ; I don't know if it is good or standards compliant to do so, but this code ensures that
+                 ; identifiers generated by the macro that would refer to the macro always do so, regardless of whether 
+                 ; the top-level meaning of the identifier is changed.
+                 ([ref (box (void))]
+                  [macro-wrapper (λ (s le qe) ((unbox ref) s le qe))]
+                  [new-top-env (hash-set top-env keyword macro-wrapper)]
+                  [macro (parse-syntax-transformer transformer-spec (hash keyword macro-wrapper))])
+               (set-box! ref macro)
+               (values (hash-set top-env keyword macro) (void)))]
+            [else
+             (raise-syntax-error#
              sexp
-             "define syntax form should contain exactly one keyword and one transformer spec"))
-            (let*
-                ;so the way things are implemented, recursive macros break if the identifier the macro was bound to is changed to refer to something else.
-                ; I don't know if it is good or standards compliant to do so, but this code ensures that
-                ; identifiers generated by the macro that would refer to the macro always do so, regardless of whether 
-                ; the top-level meaning of the identifier is changed.
-                ([keyword (car rest)]
-                 [transformer-spec (cadr rest)]
-                 [ref (box (void))]
-                 [macro-wrapper (λ (s le qe) ((unbox ref) s le qe))]
-                 [new-top-env (hash-set top-env keyword macro-wrapper)]
-                 [macro (parse-syntax-transformer transformer-spec (hash keyword macro-wrapper))])
-              (set-box! ref macro)
-              (values (hash-set top-env keyword macro) (void)))]
+             "define syntax form should contain exactly one keyword and one transformer spec")])]
          [(procedure? denotation)
           (expand-top-level-form top-env (expand-default))]
          [else
@@ -452,14 +445,14 @@
     (define top-env orig-top-env)
     (define expanded 
       (reverse 
-       (foldl 
-        (λ (s a) 
+       (for/fold
+           ([a '()])
+         ((s syntax-list))
+         
           (define-values (new-env expanded-syntax) (expand-top-level-form top-env s))
           (define accum (if (void? expanded-syntax) a (cons expanded-syntax a))) 
           (set! top-env new-env)
-          accum) 
-        '() 
-        syntax-list)))
+          accum)))
     (values top-env expanded))
     
          
