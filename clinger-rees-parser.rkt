@@ -1,6 +1,7 @@
 (module clinger-rees-parser racket
   (provide (all-defined-out))
   (require racket
+           racket/unsafe/ops
            "clinger-rees-syntax-rules.rkt")
   ;our goal in this file is to define methods that can handle all the primitive forms that aren't easily defined in terms of another form
   ;  top-level define, local define, define-syntax, let-syntax, letrec-syntax, lambda
@@ -27,7 +28,7 @@
          (raise-syntax-error#
           first
           (format "first argument to ~a must be a list" form-name)))
-       (for ([binding-form first])
+       (for ([binding-form (in-list first)])
          (verify-binding-form-shape binding-form))]
       [else
        (raise-syntax-error# 
@@ -38,12 +39,12 @@
     (verify-syntax-binding-shape syntax "let-syntax")
     (let* ([extended-env 
             (for/fold ([result def-env])
-              ((binding-form (car syntax)))
+              ((binding-form (in-list (unsafe-car syntax))))
               #;(printf "extending env with let-macro ~a\n" (car binding-form))
               (hash-set result 
-                        (car binding-form)
-                        (parse-syntax-transformer (cadr binding-form) def-env)))])
-      (values (cdr syntax) extended-env)))
+                        (unsafe-car binding-form)
+                        (parse-syntax-transformer (unsafe-car (unsafe-cdr binding-form)) def-env)))])
+      (values (unsafe-cdr syntax) extended-env)))
  
   (define (reduce-letrec-syntax syntax def-env)
     (define (make-delayed-transformer ref)
@@ -55,24 +56,24 @@
        syntax
        "Cannot recursively invoke a macro until its binding is complete")))
     (verify-syntax-binding-shape syntax "letrec-syntax")
-    (let* ([binding-forms (car syntax)]
-           [ref-map
-            (for/hash ((binding-form binding-forms))
-              (define first (car binding-form))
-              (values first (box (make-premature-use-macro first))))]
-           [extended-env 
-            (for/fold ([result def-env])
-              ((binding-form binding-forms))
-              (define id (car binding-form))
-              (define ref (hash-ref ref-map id))
+    (let*-values 
+        ([(binding-forms) (unsafe-car syntax)]
+           [(ref-map extended-env)
+            (for/fold
+                ([_ref-map (hash)]
+                 [_extended-env def-env])
+                ((binding-form (in-list binding-forms)))
+              (define id (unsafe-car binding-form))
+              (define ref (box (make-premature-use-macro first)))
               (define delayed-macro (make-delayed-transformer ref))
-              #;(printf "extending env with letrec-macro ~a\n" id)
-              (hash-set result id delayed-macro))])
-      (for ([binding-form binding-forms])
-        (define ref (hash-ref ref-map (car binding-form)))
-        (define transformer (parse-syntax-transformer (cadr binding-form) extended-env))
+              (values
+               (hash-set _ref-map id ref)
+               (hash-set _extended-env id delayed-macro)))])
+      (for ([binding-form (in-list binding-forms)])
+        (define ref (hash-ref ref-map (unsafe-car binding-form)))
+        (define transformer (parse-syntax-transformer (unsafe-car (unsafe-cdr binding-form)) extended-env))
         (set-box! ref transformer))
-      (values (cdr syntax) extended-env)))
+      (values (unsafe-cdr syntax) extended-env)))
   
   (define (verify-lambda-formals formals)
       (define (add-id s v)
@@ -97,18 +98,20 @@
   ; if this function ever became part of something other than an expander, it could be modified
   ; to return information about the formals 
   (define (verify-lambda-shape syntax)
-    (when (< (length syntax) 2)
-      (raise-syntax-error#
-       syntax
-       "lambda form requires at least an argument list and one expression"))
-    (verify-lambda-formals (car syntax)))
+    (match syntax
+      [(cons formals (cons _ _))
+       (verify-lambda-formals formals)]
+      [else
+       (raise-syntax-error#
+        syntax
+        "lambda form requires at least an argument list and one expression")]))
   
   ;extends the environment and returns the list of body expressions of the lambda with the new environment
   (define (reduce-lambda syntax env)
     (define ids (verify-lambda-shape syntax))
     (define (extended-env)
       (for/fold ([result env])
-        ((id ids))
+        ((id (in-set ids)))
         (define new-id (gensym id))
         #;(printf "aliasing ~a to ~a with denotation ~a\n" id new-id (hash-ref env id (denotation id)))
         (hash-set result id new-id)))
@@ -143,9 +146,9 @@
   (define (parse-define syntax)
     (define id (verify-define-shape syntax))
     (define body 
-      (if (symbol? (car syntax))
-          (cadr syntax)
-          `(lambda ,(cdar syntax) ,@(cdr syntax))))
+      (if (symbol? (unsafe-car syntax))
+          (unsafe-car (unsafe-cdr syntax))
+          `(lambda ,(unsafe-cdr (unsafe-car syntax)) ,@(unsafe-cdr syntax))))
     (values id body))
   
   (define (reduce-define syntax env)
@@ -166,8 +169,10 @@
          
   (define (unquote-syntax syntax quote-env)
     (cond
-      [(list? syntax)   (for/list ([s syntax]) (unquote-syntax s quote-env))]
-      [(vector? syntax) (for/vector ((s syntax)) (unquote-syntax s quote-env))]
+      [(null? syntax) syntax]
+      [(cons? syntax)
+       (cons (unquote-syntax (unsafe-car syntax) quote-env) (unquote-syntax (unsafe-cdr syntax) quote-env))]
+      [(vector? syntax) (for/vector ((s (in-vector syntax))) (unquote-syntax s quote-env))]
       [(symbol? syntax) (let loop ([s syntax]) 
                           (define new-s (hash-ref quote-env s (void)))
                           (if (void? new-s) s (loop new-s)))]
@@ -251,12 +256,12 @@
             (define-values (new-syntax new-local-env new-quote-env)
               (rewrite-inner-body-syntax defines-list rem-list local-env quote-env))
             #;(printf "new syntax: ~a\n" new-syntax)
-            (for/list ([v new-syntax]) (inner-expander v top-env new-local-env new-quote-env))])]
+            (for/list ([v (in-list new-syntax)]) (inner-expander v top-env new-local-env new-quote-env))])]
         [else
          (define-values (new-syntax new-local-env new-quote-env)
            (rewrite-inner-body-syntax defines-list rem-list local-env quote-env))
          #;(printf "new syntax: ~a\n" new-syntax)
-         (for/list ([v new-syntax]) (expand-inner-syntax v top-env new-local-env new-quote-env))]))
+         (for/list ([v (in-list new-syntax)]) (expand-inner-syntax v top-env new-local-env new-quote-env))]))
     #;(printf "Expanding body syntax: ~a\n" syntax-list)
     (loop '() syntax-list))
   
@@ -308,7 +313,7 @@
                 syntax
                 "head value cannot possibly be a procedure")]))
     (define (handle-procedure-application)
-      (for/list ([child-syntax syntax]) (recur child-syntax local-env quote-env)))
+      (for/list ([child-syntax (in-list syntax)]) (recur child-syntax local-env quote-env)))
     ;this will reduce the syntax to its body and expanded environment and then expand the environment
     ;The return value is a single piece of syntax, either a begin or letrec expression
     (define (handle-local-syntax-extension reducer)
@@ -447,7 +452,7 @@
       (reverse 
        (for/fold
            ([a '()])
-         ((s syntax-list))
+         ((s (in-list syntax-list)))
          
           (define-values (new-env expanded-syntax) (expand-top-level-form top-env s))
           (define accum (if (void? expanded-syntax) a (cons expanded-syntax a))) 

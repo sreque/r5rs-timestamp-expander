@@ -1,4 +1,5 @@
 (module clinger-rees-expander racket
+  (require racket/unsafe/ops)
   (provide (all-defined-out))
   
   (define-syntax raise-syntax-error#
@@ -25,25 +26,30 @@
   
   (define (merge-envs env1 env2)
     (for/fold ((result env1))
-      (((k v) env2))
+      (((k v) (in-hash env2)))
       (hash-set result k v)))
   
   (struct denotation (id) #:transparent)
   
+  ;This function assumes for performance reasons that both matcher-list and syntax-list are proper lists of the same length.
   (define (merge-match-results-lazy matcher-list syntax-list use-env)
-    (let/ec break
-      (for/fold ([cur-env (hash)])
-        ((m matcher-list)
-         (s syntax-list))
-        (define match-result (m s use-env))
-        (if (pattern-mismatch? match-result)
-            (break match-result)
-            (merge-envs cur-env match-result)))))
+    (let loop ([cur-env (hash)]
+               [rem-matchers matcher-list]
+               [rem-syntax syntax-list])
+      (if (null? rem-matchers)
+          cur-env
+          (let ([match-result ((unsafe-car rem-matchers) (unsafe-car rem-syntax) use-env)])
+            (if (pattern-mismatch? match-result)
+                match-result
+                (loop
+                 (merge-envs cur-env match-result)
+                 (unsafe-cdr rem-matchers)
+                 (unsafe-cdr rem-syntax)))))))
   
   (define (merge-match-results seq)
     (let/ec break
       (for/fold ((cur-env (hash)))
-        ((result seq))
+        ((result (in-list seq)))
         (if (pattern-mismatch? result)
             (break result)
             (merge-envs cur-env result)))))
@@ -54,13 +60,13 @@
     (define (invoke-loop cur-value arg-lists)
       (loop (apply proc 
                    (cons cur-value 
-                         (for/list ([v arg-lists]) (car v)))
-                   (for/list ([v arg-lists]) (cdr v)))))
+                         (for/list ([v (in-list arg-lists)]) (car v)))
+                   (for/list ([v (in-list arg-lists)]) (cdr v)))))
     
     (define (loop cur-value lists)
       (if (memv '() lists)
           (begin
-            (for ([v lists])
+            (for ([v (in-list lists)])
               (when (not (eqv? v '()))
                 (raise (error "lists of differing size"))))
             cur-value)
@@ -111,6 +117,19 @@
         [(cons _ rest) (loop (add1 count) rest)]
         [else count])))
   
+  (define (split-or-void _xs _point)
+    (let loop ([xs _xs] [point _point])
+      (cond
+        [(zero? point)
+         (values null xs)]
+        [(cons? xs)
+         (let-values ([(x y) (loop (cdr xs) (sub1 point))])
+                (if (void? x)
+                    (values x y)
+                    (values (cons (unsafe-car xs) x) y)))]
+        [else
+         (values (void) (void))])))
+  
   ;attempts to split a list. On failure, returns a pattern mismatch object
   ;On success, binds two passed-in identifiers to the split values and 
   ;invokes the passed in expressions, which should return either an environment
@@ -125,13 +144,21 @@
   (define-syntax split-or-fail
     (syntax-rules ()
       [(_ (_pattern _syntax _point) (x y) body1 body-rest ...)
-       (let-values ([(pattern syntax point) (values _pattern _syntax _point)])
-         (if (not (or (cons? syntax) (null? syntax))) ;we could catch an exception instead rather than duplicating this check that is also done in proper-length
-             (pattern-mismatch pattern syntax (format "syntax not a list: ~a" syntax))
-             (if (< (proper-length syntax) point)
-                 (pattern-mismatch pattern syntax (format "Syntax list length too short: ~a" syntax))
-                 (let-values ([(x y) (split-at syntax point)])
-                   body1 body-rest ...))))]))
+       (let-values ([(syntax point) (values _syntax _point)])
+         #;(with-handlers 
+             ((exn:fail:contract? 
+               (λ (v) 
+                 (if (or (cons? syntax) (null? syntax))
+                     (pattern-mismatch _pattern syntax (format "Syntax list length too short: ~a" syntax))
+                     (pattern-mismatch _pattern syntax (format "syntax not a list: ~a" syntax))))))
+           (let-values ([(x y) (split-at syntax point)])
+             body1 body-rest ...))
+         (define-values (x y) (split-or-void syntax point))
+         (if (void? x)
+             (if (or (cons? syntax) (null? syntax))
+                     (pattern-mismatch _pattern syntax (format "Syntax list length too short: ~a" syntax))
+                     (pattern-mismatch _pattern syntax (format "syntax not a list: ~a" syntax)))
+             (begin body1 body-rest ...)))]))
   
   ;This would be nested inside of match-merge-static if I took the time to figure out how
   (define-syntax match-merge-static-helper  
@@ -162,12 +189,12 @@
         [else (- (add1 count))])))
   ;matches all values in pattern-list against all syntax elements of syntax-list. 
   ;Both should be lists of the same size.
-  (define (multi-match parent-pattern matcher-list syntax-list init-value use-env)
+  (define (multi-match parent-pattern matcher-list matcher-list-length syntax-list init-value use-env)
     (define len (improper-length syntax-list))
     (cond 
       [(< len 0)
        (pattern-mismatch parent-pattern syntax-list (format "syntax not a proper list: ~a" syntax-list))]
-      [(not (eqv? (length matcher-list) len))
+      [(not (eqv? matcher-list-length len))
        (pattern-mismatch (input-pattern-source parent-pattern) syntax-list 
                               (format "arity mismatch\n  pattern:~a\n  syntax:~a" parent-pattern syntax-list))]
       [else
@@ -187,7 +214,7 @@
                (loop (fixed-list source sub-patterns) result))]
         [(fixed-list _ sub-patterns)
          (for/fold ([r result])
-                 ((p sub-patterns))
+                 ((p (in-list sub-patterns)))
                  (loop p r))]
         [else result])))
   
@@ -196,8 +223,8 @@
       [(pattern-identifier id) (lambda (syntax ignored) (hash id syntax))]
       [(literal-identifier id)
        ;should we verify that the input syntax is an identifier here?
+       (define literal-denotation (env-lookup def-env id))
        (lambda (syntax use-env)
-         (define literal-denotation (env-lookup def-env id))
          (define arg-denotation (env-lookup use-env syntax))
          (if (equal? literal-denotation arg-denotation)
              (hash)
@@ -207,39 +234,38 @@
       ;Instead of having an ellipses-list, have an ellipses sub-pattern
       [(ellipses-list _ sub-patterns ellipses-pattern)
        (define sub-matchers 
-         (map (lambda (p) (make-matcher p def-env)) sub-patterns))
+         (for/list ([p (in-list sub-patterns)]) (make-matcher p def-env)))
        (define ellipses-matcher (make-matcher ellipses-pattern def-env))
        (define pattern-ids (pattern-ids-in-pattern ellipses-pattern))
+       (define sub-pattern-length (length sub-patterns))
        (lambda (syntax use-env)
          (split-or-fail 
-          ((input-pattern-source pattern) syntax (length sub-patterns))
+          ((input-pattern-source pattern) syntax sub-pattern-length)
           (fixed-syntax variable-syntax)
-          (match-merge-static 
-           (merge-match-results-lazy sub-matchers fixed-syntax use-env)
-           #;(merge-match-results
-            ;TODO make lazy?
-            (map (lambda (m s) (m s use-env)) sub-matchers fixed-syntax))
-           (ellipses-match ellipses-matcher variable-syntax use-env pattern-ids)))
-         )]
+          #;(printf "fixed=syntax=~a variable-syntax=~a split-point=~a all-syntax=~a\n" fixed-syntax variable-syntax sub-pattern-length syntax)
+          (if (or (cons? variable-syntax) (null? variable-syntax))
+              (match-merge-static 
+               (merge-match-results-lazy sub-matchers fixed-syntax use-env)
+               (ellipses-match ellipses-matcher variable-syntax use-env pattern-ids))
+              (pattern-mismatch (input-pattern-source pattern) variable-syntax (format "syntax not a list: ~a" syntax)))))]
       [(improper-list _ sub-patterns end-pattern)
        (define sub-matchers 
-         (map (lambda (p) (make-matcher p def-env)) sub-patterns))
+         (for/list ([p (in-list sub-patterns)]) (make-matcher p def-env)))
        (define tail-matcher (make-matcher end-pattern def-env))
+       (define fixed-length (length sub-patterns))
        (lambda (syntax use-env)
          (split-or-fail 
-          ((input-pattern-source pattern) syntax (length sub-patterns))
+          ((input-pattern-source pattern) syntax fixed-length)
           (fixed-syntax end-syntax)
           (match-merge-static
            (merge-match-results-lazy sub-matchers fixed-syntax use-env)
-           #;(merge-match-results
-            ;TODO make lazy?
-            (map (lambda (m s) (m s use-env)) sub-matchers fixed-syntax))
            (tail-matcher end-syntax use-env))))]
       [(fixed-list _ sub-patterns) 
        (define sub-matchers 
-         (map (lambda (p) (make-matcher p def-env)) sub-patterns))
+         (for/list ([p (in-list sub-patterns)]) (make-matcher p def-env)))
+       (define num-matchers (length sub-matchers))
        (lambda (syntax use-env)
-         (multi-match pattern sub-matchers syntax (hash) use-env))]
+         (multi-match pattern sub-matchers num-matchers syntax (hash) use-env))]
       [(datum datum)
        (lambda (syntax ignored)
          (if (equal? datum syntax)
@@ -251,25 +277,26 @@
   (define (ellipses-match matcher syntax use-env pattern-ids)
     (define empty-env
       (for/fold ([env (hash)])
-        ((id pattern-ids))
+        ((id (in-set pattern-ids)))
         (hash-set env id '())))
     
     ;TODO use functional vector instead?
     (define (merge cur-env new-env)
       (for/fold ((env cur-env))
-        (((k v) new-env))
+        (((k v) (in-hash new-env)))
         (define cur-val (hash-ref env k))
         (hash-set env k (cons v cur-val))))
     (define (process-result result)
       (if (pattern-mismatch? result)
           result
           (for/fold ((new-result (hash)))
-            (((k v) result))
+            (((k v) (in-hash result)))
             (hash-set new-result k (reverse v)))))
     (process-result 
      (let/ec break
+       #;(printf "syntax-list=~a\n" syntax)
        (for/fold ((cur-env empty-env))
-         ((s syntax))
+         ((s (in-list syntax)))
          (define new-env (matcher s use-env))
          (if (pattern-mismatch? new-env)
              (break new-env)
@@ -329,7 +356,7 @@
   
   (define (merge-hashes a b resolver)
     (for/fold ([result a])
-      (((k b-value) b))
+      (((k b-value) (in-hash b)))
       (define a-value (hash-ref result k (void)))
       (define value (if (void? a-value) b-value (resolver a-value b-value)))
       (hash-set result k value)))
@@ -354,7 +381,7 @@
            (if (zero? oen) ids (merge-hash-of-sets ids more-ids))]
           [(template-list _ xs)
            (for/fold ((accum ids))
-             ((x xs))
+             ((x (in-list xs)))
              (loop x accum))]
           [(improper-template-list source xs tail)
            (loop tail (loop (template-list source xs) ids))]
@@ -399,7 +426,7 @@
                   (let* ([id-depths (find-pattern-ids (curry hash-has-key? pattern-nestings) inner-template)]
                          [anchor-id-finder (λ (id-depths) 
                                              (for/fold ([result (set)])
-                                               (((id depths) id-depths))
+                                               (((id depths) (in-hash id-depths)))
                                                (if (set-member? depths (hash-ref pattern-nestings id))
                                                    (set-add result id)
                                                    result)))]
@@ -411,7 +438,7 @@
                       ;In that case, we mutate some variables to allow the template to pretend that it really is not nested inside other ellipses templates.
                       (set! id-depths
                             (for/hash
-                                ([(id depths) id-depths]) (values id (for/set ((depth depths)) (- depth outer-ellipses-nesting)))))
+                                ([(id depths) (in-hash id-depths)]) (values id (for/set ((depth (in-set depths))) (- depth outer-ellipses-nesting)))))
                       (set! anchor-ids (anchor-id-finder id-depths))
                       (set! outer-ellipses-nesting 0)
                       (when (set-empty? anchor-ids)
@@ -492,9 +519,9 @@
         [(ellipses-template _ inner _ _ _ _)
          (dfs inner result)]
         [(template-list _ inner-templates)
-         (for/fold ([r result]) ((sub-t inner-templates)) (dfs sub-t r))]
+         (for/fold ([r result]) ((sub-t (in-list inner-templates))) (dfs sub-t r))]
         [(improper-template-list _ ts tail)
-         (for/fold ((r (dfs tail result))) ((t ts)) (dfs t r))]
+         (for/fold ((r (dfs tail result))) ((t (in-list ts))) (dfs t r))]
         [(template-datum _) result]))
     (dfs template (set)))
   
@@ -558,9 +585,9 @@
   (define (check-lengths xss source)
     (match xss
       [(cons first rest)
-       (let* ([l1 (length first)] [s (set l1)])
-         (for ([xs rest])
-           (unless (set-member? s (length xs))
+       (let ([l1 (length first)])
+         (for ([xs (in-list rest)])
+           (unless (eqv? l1 (length xs))
              (raise-syntax-error#
               source
               (format "template values length mismatch: values=~a\nsyntax=~a" xss source))))
@@ -589,11 +616,11 @@
     #;(printf "vals=~a rep-depths=~a ellipses-count=~a\n" vals rep-depths ellipses-count)
     (define no-reps
       (for/fold ([result '()])
-        ((v vals) (depth rep-depths))
+        ((v (in-list vals)) (depth rep-depths))
         (if (eqv? depth 0) (cons v result) result)))
     (define lengths (check-lengths no-reps source))
     (when (and (> ellipses-count 1) (> lengths 0))
-      (define new-rep-depths (for/list ([v rep-depths]) (if (eqv? v 0) 0 (sub1 v))))
+      (define new-rep-depths (for/list ([v (in-list rep-depths)]) (if (eqv? v 0) 0 (sub1 v))))
       (let loop ([child-cdrs vals] 
                  [vals-left (sub1 lengths)])
         (define child-cars 
@@ -653,10 +680,10 @@
             (λ (v) (not (null? v)))
             (apply append 
                    (for/list
-                       ([(id depths) id-depths])
+                       ([(id depths) (in-hash id-depths)])
                      (define anchor-id? (set-member? anchor-ids id))
                      (define pattern-depth (hash-ref pattern-depths id))
-                     (for/list ([depth depths])
+                     (for/list ([depth (in-set depths)])
                        (define cur-depth (- depth outer-ellipses-count))
                        (define depth-diff (- cur-depth pattern-depth))
                        (assert (>= cur-depth ellipses-count))
@@ -678,25 +705,25 @@
                           (list id (- depth outer-ellipses-count) 0 (λ (vs) (flatten# vs (sub1 ellipses-count))))]))))))
          ;the values before flattening/replicating. This will only be used to verify that lengths are the same for all values.
          (define pre-xss
-           (for/list ([v sub-map-additions])
+           (for/list ([v (in-list sub-map-additions)])
              (match-define (cons id  (cons depth _)) v)
              (hash-ref (hash-ref sub-map id) depth)))
          (define rep-depths
-           (for/list ([v sub-map-additions]) (caddr v)))
+           (for/list ([v (in-list sub-map-additions)]) (caddr v)))
          ;this is where we verify that value lengths are correct. We could check this after flattening and only use check-lengths.
          ;This would be faster but would make certain edge case macro invocations valid that should result in errors, as we lose information during the flattenings.
          (check-lengths-with-rep-depths source pre-xss rep-depths ellipses-count)
          (define xss
-           (for/list ([v sub-map-additions])
+           (for/list ([v (in-list sub-map-additions)])
              (match-define (list id depth rep-depth func) v)
              (func (hash-ref (hash-ref sub-map id) depth))))
          #;(printf "xss=~a sub-map-additions=~a id-depths=~a sub-map=~a anchor-ids=~a source=~a\n" xss sub-map-additions id-depths sub-map anchor-ids source)
          ;This is where we invoke our inner template multiple times using augmented substitution maps.
          (for/list
-             ([args (list-transpose xss)])
+             ([args (in-list (list-transpose xss))])
            (define _sub-map
              (for/fold ([_sub-map sub-map]) 
-               ((arg args) (add-info sub-map-additions))
+               ((arg (in-list args)) (add-info (in-list sub-map-additions)))
                (if (null? add-info)
                    _sub-map
                    (let () 
@@ -705,14 +732,14 @@
            (inner-rewriter _sub-map)))]
       [(template-list _ inner-templates)
        (list-fuser
-        (for/list ([t inner-templates]) (recur t))
-        (for/list ([t inner-templates]) (rewriter-fuser t))
+        (for/list ([t (in-list inner-templates)]) (recur t))
+        (for/list ([t (in-list inner-templates)]) (rewriter-fuser t))
         (lambda (ignore) '()))]
       [(improper-template-list source sub-templates tail-template)
        (define tail-rewriter (recur tail-template))
        (list-fuser
-        (for/list ([t sub-templates]) (recur t))
-        (for/list ([t sub-templates]) (rewriter-fuser t))
+        (for/list ([t (in-list sub-templates)]) (recur t))
+        (for/list ([t (in-list sub-templates)]) (rewriter-fuser t))
         tail-rewriter)]
       [(template-datum d) 
        (lambda (ignored) d)]))
@@ -742,7 +769,7 @@
       (when (not (list? syntax))
         (error (format "Expected a syntax-rules literals list, got a non-list value ~a" syntax)))
       (for/fold ((result (set)))
-        ((lit syntax))
+        ((lit (in-list syntax)))
         (when (not (symbol? lit))
           (error (format "non-symbol value inside of syntax-rules literals list: ~a" lit)))
         (when (set-member? result lit)
@@ -753,7 +780,7 @@
         (error (format 
                 "malformed syntax-rules syntax. Got a non-list value for the list of pattern-template pairs: ~a" 
                 syntax)))
-      (for/list ([s syntax])
+      (for/list ([s (in-list syntax)])
         (match s
           [(list pattern template)
            (match pattern
@@ -784,12 +811,12 @@
     (define (rewrite rule syntax use-env pattern-env orig-sym-env)
       (match-define (syntax-rule matcher rewriter regular-ids def-env id-depths) rule)
       (define fresh-regular-env
-        (for/hash ([id regular-ids])
+        (for/hash ([id (in-set regular-ids)])
           (values id (gensym id))))
       (define macro-env
         (for/fold
             ([env
-              (for/hash ([(id new-id) fresh-regular-env])
+              (for/hash ([(id new-id) (in-hash fresh-regular-env)])
                 (values id (hash 0 new-id)))])
           (((id value) pattern-env))
           (assert (not (hash-has-key? env id)))
@@ -797,7 +824,7 @@
       #;(define macro-env (merge-envs fresh-regular-env pattern-env)) 
       (define new-use-env
         (for/fold ((result use-env))
-          ((id regular-ids))
+          ((id (in-set regular-ids)))
           (define new-id (hash-ref fresh-regular-env id))
           (define cur-binding (hash-ref def-env id (void)))
           (define binding (if (void? cur-binding)
@@ -807,7 +834,7 @@
           (hash-set result new-id binding)))
       (define new-orig-sym-env
         (for/fold ([result orig-sym-env])
-          ((id regular-ids))
+          ((id (in-set regular-ids)))
           (hash-set result (hash-ref fresh-regular-env id) id)))
       (define new-syntax (rewriter macro-env))
       (values new-syntax new-use-env new-orig-sym-env))
