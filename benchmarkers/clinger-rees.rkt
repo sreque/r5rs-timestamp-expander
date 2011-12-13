@@ -44,24 +44,26 @@
          (cons path (call-with-input-file path read-all))          
          (void)))))
 
-#;(printf "~a\n" sources)
+#;(printf "~a\n" (for/list ([v sources]) (car v)))
+#;(exit)
 (define (main)
   (for ([v sources])
     (match-define (cons path code) v)
-    (define-values (_ cpu real gc) (benchmark (λ () (call-with-values (λ () (expand-program r5rs-top-level-env code)) list)) 0))
+    (define-values (_ cpu real gc) (benchmark 
+                                    (λ () (call-with-values 
+                                           (λ () (expand-program r5rs-top-level-env code)) list)) 0))
     (printf "~a: real=~as cpu=~as gc=~as\n" (find-relative-path benchmark-dir path) (/ real 1000.0) (/ cpu 1000.0) (/ gc 1000.0))))
 
-#;(profile-thunk main
+(define (profile-main)
+  (for ([v sources])
+    (match-define (cons path code) v)
+    (expand-program r5rs-top-level-env code)))
+
+#;(profile-thunk profile-main
          #:delay 0.005
-         #:repeat 5
+         #:repeat 1
          #:render profile:text:render)
 
 (main)
-
-#;(define sieve-code 
-  (call-with-input-file
-   "benchmark_sources/sieve-stress-test.scm"
-   read-all))
-
-#;(define-values (_ cpu real gc) (benchmark (λ () (expand-expr-list sieve-code)) 5))
-#;(printf "sieve test: real=~as cpu=~as gc=~as\n" (/ real 1000.0) (/ cpu 1000.0) (/ gc 1000.0))
+(flush-output)
+(flush-output)

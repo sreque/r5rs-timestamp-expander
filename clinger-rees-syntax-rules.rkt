@@ -1,6 +1,17 @@
 (module clinger-rees-expander racket
   (require racket/unsafe/ops)
-  (provide (all-defined-out))
+  (provide (except-out (all-defined-out) format))
+  
+  
+  ;Temporary hack for performance. Ideally, we create two versions of the matcher module:
+  ;  one that gives detailed error reporting, and 
+  ;  one that is used for performance. 
+  ;The performant one would be used when doing normal matching. 
+  ;When a a macro entirely fails to match on an invocation, 
+  ; the other version would be invoked to provide a detailed error message to the user.
+  (define-syntax format
+    (syntax-rules ()
+      [(_ arg1 arg-rest ...) arg1]))
   
   (define-syntax raise-syntax-error#
     (syntax-rules ()
@@ -181,16 +192,16 @@
           result1 
           (match-merge-static-helper result1 expr-rest ...)))]))
   
-  (define (improper-length ls)
+  (define (improper-length ls check-up-to)
     (let loop ([cur ls] [count 0])
       (match cur
-        [(cons _ rest) (loop rest (add1 count))]
+        [(cons _ rest) (if (>= count check-up-to) (add1 count) (loop rest (add1 count)))]
         ['() count]
         [else (- (add1 count))])))
   ;matches all values in pattern-list against all syntax elements of syntax-list. 
   ;Both should be lists of the same size.
   (define (multi-match parent-pattern matcher-list matcher-list-length syntax-list init-value use-env)
-    (define len (improper-length syntax-list))
+    (define len (improper-length syntax-list matcher-list-length))
     (cond 
       [(< len 0)
        (pattern-mismatch parent-pattern syntax-list (format "syntax not a proper list: ~a" syntax-list))]
@@ -818,7 +829,7 @@
             ([env
               (for/hash ([(id new-id) (in-hash fresh-regular-env)])
                 (values id (hash 0 new-id)))])
-          (((id value) pattern-env))
+          (((id value) (in-hash pattern-env)))
           (assert (not (hash-has-key? env id)))
           (hash-set env id (hash (hash-ref id-depths id) value))))
       #;(define macro-env (merge-envs fresh-regular-env pattern-env)) 

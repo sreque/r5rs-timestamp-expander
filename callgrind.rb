@@ -89,8 +89,8 @@ class ProfileDataFsm
     go_idle()
   end
 
-  StartDelimiterRegex = /^=========================================================================$/
-  RecordDelimiterRegex = /^-------------------------------------------------------------------------$/
+  StartDelimiterRegex = /^={50,}$/
+  RecordDelimiterRegex = /^-{50,}$/
   FunctionNameRegex = /(?:[^\[\s]+)|(?:\[[^\]]+\])/
   TimeRegex = /(\d+)\((#{FloatRegex})%\)/ #has two captures
   FunctionRegexShared = /^\s*\[(\d+)\]\s+#{TimeRegex}\s+#{TimeRegex}\s+(#{FunctionNameRegex})\s+/

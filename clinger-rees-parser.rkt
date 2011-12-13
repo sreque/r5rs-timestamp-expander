@@ -1,12 +1,17 @@
 (module clinger-rees-parser racket
-  (provide (all-defined-out))
-  (require racket
-           racket/unsafe/ops
-           "clinger-rees-syntax-rules.rkt")
+  (provide (except-out (all-defined-out) format))
+  (require 
+   racket/unsafe/ops
+   "clinger-rees-syntax-rules.rkt")
   ;our goal in this file is to define methods that can handle all the primitive forms that aren't easily defined in terms of another form
   ;  top-level define, local define, define-syntax, let-syntax, letrec-syntax, lambda
   ;(define (syntax-definition? form)
-    
+
+  ;See notes to format macro in clinger-rees-syntax-rules.rkt
+  (define-syntax format
+    (syntax-rules ()
+      [(_ arg1 arg-rest ...) arg1]))
+  
   (define (verify-binding-form-shape binding-form)
     (match binding-form
       [(list (? symbol?) _) (void)]
