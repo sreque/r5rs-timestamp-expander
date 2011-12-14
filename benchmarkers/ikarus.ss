@@ -46,7 +46,8 @@
   (map (lambda (v)
          (string-append benchmark-dir "/" v))
     (filter (lambda (v)
-              (or (string-ends-with? v ".rkt") (string-ends-with? v ".scm")))
+              (and (or (string-ends-with? v ".rkt") (string-ends-with? v ".scm"))
+                   (not (equal? v "fib.scm"))))
             (directory-list benchmark-dir))))
 
 ;(display (read-all (car src-files)))
