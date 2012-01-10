@@ -404,7 +404,7 @@
     (let loop ((cur null) (rem c))
       (if (zero? rem)
           cur
-          (loop (cons '... cur) (sub1 rem)))))
+          (loop (cons v cur) (sub1 rem)))))
   
   (define (parse-transformer-template syntax pattern-nestings #:outer-ellipses-nesting (outer-ellipses-nesting 0))
     (define (parse-list parsed-stack remaining-list)
@@ -864,6 +864,13 @@
                       (rewrite rule syntax use-env match orig-sym-env)))]
               [else
                (error (format "match failed\nsyntax: ~a\nmatch errors: ~a" syntax (reverse match-failures)))])))))
+  
+  ;Turns syntax, with the given environment, into a function of the following signature:
+    ; syntax -> environment -> environment -> (syntax, environment, environment)
+      ;any valid scheme syntax
+      ;the use environment
+      ;the environment mapping transformed symbols to their original user-specified symbols (needed to implement quote)
+      ;returns the transformed syntax, the extended use environment, and the extended original symbol environment
   (define (parse-syntax-transformer syntax def-env)
     (make-macro-transformer
      (parse-syntax-rules syntax def-env)))

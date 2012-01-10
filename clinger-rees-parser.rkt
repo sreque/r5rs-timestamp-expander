@@ -223,9 +223,26 @@
         [else
          #;(printf "after using macro ~a to expand ~a to ~a, recursively epxanding with new-local-env=~a\n" denotation use-syntax new-syntax new-local-env)
           (partially-expanded new-syntax new-local-env new-quote-env)]))
+    (define-syntax app-pred
+      (syntax-rules ()
+        [(_ _v)
+         (let  ([v _v]) (and (cons? v) (symbol? (unsafe-car v))))]))
+    (define-syntax super-app-pred
+      (syntax-rules ()
+        [(_ _v)
+         (let ([v _v])
+           (or (app-pred v) (and (partially-expanded? v) (app-pred (partially-expanded-syntax v)))))]))
+    #;(define-syntax app-pred (syntax-rules () [(_ v) (match v [(cons (? symbol?) _) #t] [else #f])]))
+    #;(define super-app-pred (λ (v) (or (app-pred v) (and (partially-expanded? v) (app-pred (partially-expanded-syntax v))))))
     (define (loop defines-list rem-list)
-      (define app-pred (λ (v) (match v [(cons (? symbol?) _) #t] [else #f])))
-      (define super-app-pred (λ (v) (or (app-pred v) (and (partially-expanded? v) (app-pred (partially-expanded-syntax v))))))
+      (define-syntax no-more-defines
+        (syntax-rules ()
+          [(_)
+           (begin
+             (define-values (new-syntax new-local-env new-quote-env)
+               (rewrite-inner-body-syntax defines-list rem-list local-env quote-env))
+             #;(printf "new syntax: ~a\n" new-syntax)
+             (for/list ([v (in-list new-syntax)]) (expand-inner-syntax v top-env new-local-env new-quote-env)))]))
       (match rem-list 
         ['()
          (raise-syntax-error#
@@ -257,16 +274,8 @@
            [(procedure? denotation)
             #;(printf "invoking macro ~a on ~a\n" symbol app-expr)
             (loop defines-list (cons (handle-macro-use denotation app-expr le qe) cdr-rem-list))]
-           [else
-            (define-values (new-syntax new-local-env new-quote-env)
-              (rewrite-inner-body-syntax defines-list rem-list local-env quote-env))
-            #;(printf "new syntax: ~a\n" new-syntax)
-            (for/list ([v (in-list new-syntax)]) (inner-expander v top-env new-local-env new-quote-env))])]
-        [else
-         (define-values (new-syntax new-local-env new-quote-env)
-           (rewrite-inner-body-syntax defines-list rem-list local-env quote-env))
-         #;(printf "new syntax: ~a\n" new-syntax)
-         (for/list ([v (in-list new-syntax)]) (expand-inner-syntax v top-env new-local-env new-quote-env))]))
+           [else (no-more-defines)])]
+        [else (no-more-defines)]))
     #;(printf "Expanding body syntax: ~a\n" syntax-list)
     (loop '() syntax-list))
   
@@ -274,7 +283,6 @@
   (define rewrite-inner-body-macro
     (parse-syntax-transformer
      '(syntax-rules ()
-        [(macro () body ...)  (body ...)]
         [(macro ((symbol def) ...) body ...)
          ((letrec
              ((symbol def) ...) body ...))]) 
@@ -297,7 +305,8 @@
   ;it is expected that the defines-list is in reverse order of the original declaration
   (define (rewrite-inner-body-syntax inverse-defines-list body-list local-env quote-env)
     #;(printf "defines-list: ~a\n" (reverse inverse-defines-list))
-    (rewrite-inner-body-macro `(,(gensym 'inner-body-macro) ,(reverse inverse-defines-list) ,@body-list) local-env quote-env))
+    (if (null? inverse-defines-list) (values body-list local-env quote-env)
+        (rewrite-inner-body-macro `(,(gensym 'inner-body-macro) ,(reverse inverse-defines-list) ,@body-list) local-env quote-env)))
 
   ;expand a piece of syntax that is not at the top level and not at the beginning of a body
   ;this means that define and define-syntax is illegal
@@ -306,19 +315,10 @@
     (define-syntax recur
       (syntax-rules ()
         [(_ s le qe) (expand-inner-syntax s top-env le qe #:at-top-level at-top-level)]))
-    (define (handle-list)
-      (match syntax
-        ['()
-         (raise-syntax-error#
-          syntax
-          "illegal empty list")]
-        [(cons (? symbol?) _) (handle-symbol-application)]
-        [(cons (cons _ _) _) (handle-procedure-application)]
-        [else (raise-syntax-error#
-                syntax
-                "head value cannot possibly be a procedure")]))
-    (define (handle-procedure-application)
-      (for/list ([child-syntax (in-list syntax)]) (recur child-syntax local-env quote-env)))
+    (define-syntax handle-procedure-application
+      (syntax-rules ()
+        [(_)
+        (for/list ([child-syntax (in-list syntax)]) (recur child-syntax local-env quote-env))]))
     ;this will reduce the syntax to its body and expanded environment and then expand the environment
     ;The return value is a single piece of syntax, either a begin or letrec expression
     (define (handle-local-syntax-extension reducer)
@@ -328,7 +328,7 @@
           (cons 'begin expanded-forms)
           (car expanded-forms)))
     (define (handle-symbol-application)
-      (define symbol (car syntax))
+      (define symbol (unsafe-car syntax))
       (define-values (denotation denotes-keyword?) (get-denotation-and-keyword-predicate symbol top-env local-env))
       #;(printf "applied symbol=~a denotation=~a eqv-quote?=~a\n" symbol denotation (denotes-keyword? 'quote))
       (cond
@@ -342,10 +342,7 @@
               syntax
               (format "~a illegal except at the top level and at the beginning of a body expression" symbol)))]
         [(denotes-keyword? 'begin)
-         #;(define-values (new-syntax new-local-env new-quote-env) 
-           (rewrite-inner-body-macro (cdr syntax) local-env quote-env))
-         #;(expand-inner-syntax  new-syntax top-env new-local-env new-quote-env)
-         (cons 'begin (expand-inner-body-syntax (cdr syntax) top-env local-env quote-env))]
+         (cons 'begin (expand-inner-body-syntax (unsafe-cdr syntax) top-env local-env quote-env))]
         [(denotes-keyword? 'let-syntax)
          (handle-local-syntax-extension reduce-let-syntax)]
         [(denotes-keyword? 'letrec-syntax)
@@ -370,8 +367,19 @@
         [else (handle-procedure-application)]))
     #;(printf "Expanding inner syntax: ~a\n  local-env=~a\n" syntax local-env)
     (cond
-      [(or (cons? syntax) (null? syntax))
-       (handle-list)]
+      [(null? syntax)
+       (raise-syntax-error#
+          syntax
+          "illegal empty list")]
+      [(cons? syntax)
+       (define head (unsafe-car syntax))
+       (if (symbol? head)
+           (handle-symbol-application)
+           (if (cons? head)
+               (handle-procedure-application)
+               (raise-syntax-error#
+                syntax
+                "head value cannot possibly be a procedure")))]
       [(vector? syntax)
        (raise-syntax-error#
         syntax

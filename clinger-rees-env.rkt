@@ -45,8 +45,25 @@
           (parse-internal-macro (quote ,value)))
         (set! r5rs-top-level-env (hash-set r5rs-top-level-env (quote ,id) ,new-id)))))
   
+  (define (letrec-macro-optimized syntax use-env quote-env)
+    (match syntax
+      [(list _ (list (list (? symbol? var) init) ...) body1 body-rest ...)
+       (define lambda-sym (gensym 'lambda))
+       (define set-sym (gensym 'set!))
+       (define new-use-env (hash-set (hash-set use-env lambda-sym (denotation 'lambda)) set-sym (denotation 'set!)))
+       (define new-quote-env (hash-set (hash-set quote-env lambda-sym 'lambda) set-sym 'set!))
+       (define new-syntax `((,lambda-sym ,var ,@(for/list ([v (in-list var)] [i (in-list init)]) `(,set-sym ,v ,i)) ,body1 ,@body-rest) ,@(list-mult ''undefined (length var))))
+       (values new-syntax new-use-env new-quote-env)]
+      [else (error (format "invalid syntax for letrec expression. syntax=~a" syntax))]))
   
-  (define-macro letrec
+  (set! r5rs-top-level-env (hash-set r5rs-top-level-env 'letrec letrec-macro-optimized))
+  ;An optimized letrec needs to tranform into ((lambda (var ...) (set! var init) ... body ...) 'undefined ...)
+    ;needs to extend environment with new lambda-denoting symbol
+
+  ;even more optimized! transform to (begin (set! var init) .... body ...)
+    ;manually extend use environment with vars, doing the rewriting ourselves manually.
+    ;needs to extend with new begin-denoting symbol
+  #;(define-macro letrec
     (syntax-rules () 
       [(_ ((var init) ...) . body) 
        (let ((var 'undefined) ...)  ;should I use (void) here?
@@ -54,6 +71,11 @@
                ... 
                (bod (lambda () . body))) 
            (var) ... (bod)))]))
+  
+  #;(define-macro letrec
+    (syntax-rules ()
+      [(_ ((var init) ...) . body)
+       ((lambda (var ...) (set! var init) ... body ...) 'undefined ...)]))
   
   (define-macro cond
     (syntax-rules (else =>)

@@ -61,7 +61,7 @@
 
 #;(profile-thunk profile-main
          #:delay 0.005
-         #:repeat 1
+         #:repeat 50
          #:render profile:text:render)
 
 (main)
