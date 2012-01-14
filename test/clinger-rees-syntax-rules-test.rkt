@@ -6,7 +6,7 @@
            "../clinger-rees-syntax-rules.rkt")
   
   (define (check-match-success result)
-    (check-pred hash? result))
+    (check-pred void? result))
   
   (define (check-match-failure result)
     (pattern-mismatch? result))
@@ -64,23 +64,28 @@
             [p1 (datum 'a)] ;really symbols shouldn't be supported
             [p2 (datum "a")]
             [p3 (datum #\a)]
-            [p4 (fixed-list '() (list (datum syntax)))])
-       (define result ((make-matcher p1 (hash)) syntax (hash)))
+            [p4 (fixed-list '() (list (datum syntax)))]
+            [register (hash 'a 0)]
+            [pvec (make-vector 1 (void))])
+       (define result ((make-matcher p1 (hash) register 1) syntax (hash) pvec))
        (check-match-success result)
-       (check-pred hash-empty? result (format "hash should be empty: ~a\n" result))
+       (check-pred void? (vector-ref pvec 0) (format "vector should be empty: ~a\n" pvec))
        (for ([p (list p2 p3 p4)])
-         (check-match-failure ((make-matcher p (hash)) syntax (hash)))))
+         (check-match-failure ((make-matcher p (hash) register 1) syntax (hash) pvec))))
      
      ;test pattern identifier's resulting matcher matching different kinds of syntax.
-     (let ([pattern (pattern-identifier 'v)]
-           [s1 'v]
-           [s2 '(a b c d)]
-           [s3 #(bob dole is cool)]
-           [s4 #hash( (1 . 2) (3 . 4) (5 . 6))])
+     (let* ([pattern (pattern-identifier 'v 0)]
+            [register (hash 'v 0)]
+            [matcher (make-matcher pattern (hash) register 1)]
+            [s1 'v]
+            [s2 '(a b c d)]
+            [s3 #(bob dole is cool)]
+            [s4 #hash( (1 . 2) (3 . 4) (5 . 6))]
+            [pvec (make-vector 1 (void))])
        (for ([s (list s1 s2 s3 s4)])
-         (define result ((make-matcher pattern (hash)) s (hash)))
+         (define result (matcher s (hash) pvec))
          (check-match-success result)
-         (check-equal? result (hash (input-pattern-source pattern) s))))
+         (check-equal? s (vector-ref pvec 0))))
      
      ;test matching of a  literal identifier based on the environment
      (let* ([id 'x]
@@ -92,17 +97,16 @@
             [id2 'y]
             [diff-env (hash id2 (hash-ref env1 id))])
        (for ([env (list empty-env env1 env2)])
-         (define result ((make-matcher pattern env) id env))
-         (check-match-success result)
-         (check-pred hash-empty? result))
+         (define result ((make-matcher pattern env (hash) 0) id env (vector)))
+         (check-match-success result))
        (for ([s bad-syntaxes])
-         (check-match-failure ((make-matcher pattern empty-env) s empty-env)))
+         (check-match-failure ((make-matcher pattern empty-env (hash) 0) s empty-env (vector))))
        (for ([e1 (list empty-env env1 env2)]
              [e2 (list env1 env2 empty-env)])
-         (check-match-failure ((make-matcher pattern e1) id e2)))
-       (check-match-success ((make-matcher pattern env1) id2 diff-env))
-       (check-match-failure ((make-matcher pattern env1) id diff-env))
-       (check-match-failure ((make-matcher pattern env2) id2 diff-env)))
+         (check-match-failure ((make-matcher pattern e1 (hash) 0) id e2 (vector))))
+       (check-match-success ((make-matcher pattern env1 (hash) 0) id2 diff-env (vector)))
+       (check-match-failure ((make-matcher pattern env1 (hash) 0) id diff-env (vector)))
+       (check-match-failure ((make-matcher pattern env2 (hash) 0) id2 diff-env (vector))))
      
      ;test matching of fixed list against syntax lists of the same and different sizes and with different contents
      (let* ([syntax '(a b c d e f g)]
@@ -110,12 +114,11 @@
             [small-syntax (take syntax (sub1 (length syntax)))]
             [wrong-syntax (map (lambda (s) (if (eqv? s 'd) 'z s)) syntax)]
             [pattern (fixed-list syntax (map (lambda (s) (datum s)) syntax))]
-            [matcher (make-matcher pattern (hash))])
-       (define good-result (matcher syntax (hash)))
+            [matcher (make-matcher pattern (hash) (hash) 0)])
+       (define good-result (matcher syntax (hash) (vector)))
        (check-match-success good-result)
-       (check-pred hash-empty? good-result)
-       (check-match-failure (matcher big-syntax (hash)))
-       (check-match-failure (matcher wrong-syntax (hash))))
+       (check-match-failure (matcher big-syntax (hash) (vector)))
+       (check-match-failure (matcher wrong-syntax (hash) (vector))))
      
      ;check matching against nested fixed lists
      (let* ([syntax '((invoke return value) literal (a b))]
@@ -123,12 +126,15 @@
             [id2 'y]
             [id3 'z]
             [pattern (fixed-list '() 
-                                 (list (pattern-identifier id1) 
+                                 (list (pattern-identifier id1 0) 
                                        (literal-identifier 'literal)
-                                       (fixed-list '() (list (pattern-identifier id2)
-                                                             (pattern-identifier id3)))))])
-       (define result ((make-matcher pattern (hash)) syntax (hash)))
-       (check-equal? result (hash id1 '(invoke return value) id2 'a id3 'b)))
+                                       (fixed-list '() (list (pattern-identifier id2 1)
+                                                             (pattern-identifier id3 2)))))]
+            [register (hash id1 0 id2 1 id3 2)]
+            [reg-size 3]
+            [pvec (make-vector reg-size (void))])
+       (define result ((make-matcher pattern (hash) register reg-size) syntax (hash) pvec))
+       (check-equal? pvec (vector '(invoke return value) 'a 'b)))
      
      ;This test is flawed and needs to be changed or removed. 
      ;datum should not be used to match symbols. 
@@ -137,7 +143,7 @@
             [id2 'y]
             [pattern (improper-list 
                       '() 
-                      (list (datum 'a) (datum 'b) (pattern-identifier id1))
+                      (list (datum 'a) (datum 'b) (pattern-identifier id1 0))
                       (fixed-list 
                        '()
                        (list
@@ -145,56 +151,67 @@
                          '()
                          (list (datum 'd) 
                                (datum 'e)
-                               (pattern-identifier id2)
+                               (pattern-identifier id2 1)
                                (datum 'i)))
                         (datum 'j)
                         (datum 'k))))]
-            [matcher (make-matcher pattern (hash))]
+            [register (hash id1 0 id2 1)]
+            [pvec (make-vector 2 (void))]
+            [matcher (make-matcher pattern (hash) register 2)]
             [too-short '(a b)]
             [too-long (cons 'z syntax)])
-       (define result (matcher syntax (hash)))
-       (check-equal? result (hash id1 'c id2 '(f g h)))
-       (check-match-failure (matcher too-short (hash)))
-       (check-match-failure (matcher too-long (hash)))
-       (check-match-failure (matcher 'weird-syntax (hash))))
+       (define result (matcher syntax (hash) pvec))
+       (check-match-success result)
+       (check-equal? pvec (vector 'c '(f g h)))
+       (check-match-failure (matcher too-short (hash) pvec))
+       (check-match-failure (matcher too-long (hash) pvec))
+       (check-match-failure (matcher 'weird-syntax (hash) pvec)))
      
      ;test matching of ellipses list against lists of varying length
      (let* ([syntax '(a b c d e f g)]
             [id 'x]
             [id2 'y]
             [pattern (ellipses-list '() 
-                                    (list (datum 'a) (datum 'b) (pattern-identifier id2)) 
-                                    (pattern-identifier id))]
+                                    (list (datum 'a) (datum 'b) (pattern-identifier id2 1)) 
+                                    (pattern-identifier id 0))]
+            [register (hash id 0 id2 1)]
+            [pvec (make-vector 2 (void))]
             [too-small '(a b c)]
             [really-small '(a)]
             [just-right '(a b c d)]
-            [matcher (curryr (make-matcher pattern (hash)) (hash))])
-       (check-equal? (matcher syntax) (hash id '(d e f g) id2 'c))
-       (check-equal? (matcher just-right) (hash id '(d) id2 'c))
+            [_matcher (make-matcher pattern (hash) register 2)]
+            [matcher (λ (s) 
+                       (define match-result (_matcher s (hash) pvec))
+                       (if (pattern-mismatch? match-result) match-result pvec))])
+       (check-equal? (matcher syntax) (vector '(d e f g) 'c))
+       (check-equal? (matcher just-right) (vector '(d) 'c))
        (check-match-failure (matcher too-small))
        (check-match-failure (matcher really-small))
        (check-match-failure (matcher 5)))
      
      ;test matching of a ((x ...) ...) against a nested list
      (let* ([syntax '((a b c) (c d e) (f g h) (i j k) (l m) (n))]
-            [pattern (ellipses-list '() (list) (ellipses-list '() (list) (pattern-identifier 'x)))])
-       (check-equal? ((make-matcher pattern (hash)) syntax (hash)) (hash 'x syntax)))
+            [pattern (ellipses-list '() (list) (ellipses-list '() (list) (pattern-identifier 'x 0)))]
+            [pvec (vector (void))])
+       (define match-result ((make-matcher pattern (hash) (hash 'x 0) 1) syntax (hash) pvec))
+       (check-match-success match-result)
+       (check-equal? pvec  (vector syntax)))
      
      ;test parsing of an ellipses list and resulting matcher.
-     (let*
-         ([pattern (parse-transformer-pattern '(test1 test2 ...) (set))]
-          [ids (compute-ellipses-nesting pattern)])
+     (let*-values
+         ([(pattern indexes size) (parse-transformer-pattern '(test1 test2 ...) (set))]
+          [(ids) (compute-ellipses-nesting pattern size)])
        (check-pred ellipses-list? pattern)
-       (check-equal? (ellipses-list-sub-patterns pattern) (list (pattern-identifier 'test1)))
-       (check-equal? (ellipses-list-tail-pattern pattern) (pattern-identifier 'test2))
-       (check-equal? ids (hash 'test1 0 'test2 1)))
+       (check-equal? (ellipses-list-sub-patterns pattern) (list (pattern-identifier 'test1 0)))
+       (check-equal? (ellipses-list-tail-pattern pattern) (pattern-identifier 'test2 1))
+       (check-equal? ids (vector 0 1)))
      
      ;test parsing of 3-level deep ellipses pattern and resulting matcher
-     (let*
-         ([pattern 
+     (let*-values
+         ([(pattern register size) 
            (parse-transformer-pattern 
             '(((((a ...) (b ...) (c ...)) ...) -) ...) (set))]
-          [ids (compute-ellipses-nesting pattern)])
+          [(ids) (compute-ellipses-nesting pattern size)])
        (check-equal? 
         pattern
         (ellipses-list
@@ -209,44 +226,48 @@
              (list
               (ellipses-list
                '(a ...) '()
-               (pattern-identifier 'a))
+               (pattern-identifier 'a 0))
               (ellipses-list
                '(b ...) '()
-               (pattern-identifier 'b))
+               (pattern-identifier 'b 1))
               (ellipses-list
                '(c ...) '()
-               (pattern-identifier 'c)))))
-           (pattern-identifier '-)))) )              
-       (check-equal? ids (hash 'a 3 'b 3 'c 3 '- 1)))
+               (pattern-identifier 'c 2)))))
+           (pattern-identifier '- 3)))) )              
+       (check-equal? ids (vector 3 3 3 1)))
      
      ;checks that duplicate ids lead to syntax error
-     (let ([pattern 
-            (parse-transformer-pattern 
-             '((((a ...) (b ...)) ...) (d e f g . ((h (i j (k l m (a)))) ...))) (set))])
+     #;(let-values ([(pattern register size)
+                   (parse-transformer-pattern 
+                    '((((a ...) (b ...)) ...) (d e f g . ((h (i j (k l m (a)))) ...))) (set))])
        (check-exn syntax-error? (lambda () (compute-ellipses-nesting pattern)))
        )
+     (check-exn syntax-error? (lambda () 
+                                (parse-transformer-pattern 
+                                 '((((a ...) (b ...)) ...) (d e f g . ((h (i j (k l m (a)))) ...))) (set))))
      
      ;basic ellipses nesting test
-     (let* ([pattern
+     (let*-values 
+         ([(pattern register size)
              (parse-transformer-pattern
               '(a b . "bob") (set 'd 'e))]
-            [ids (compute-ellipses-nesting pattern)])
+            [(ids) (compute-ellipses-nesting pattern size)])
        (check-equal?
         pattern
         (improper-list
          '(a b . "bob")
          (list
-          (pattern-identifier 'a)
-          (pattern-identifier 'b))
+          (pattern-identifier 'a 0)
+          (pattern-identifier 'b 1))
          (datum "bob")))
-       (check-equal? ids (hash 'a 0 'b 0)))
+       (check-equal? ids (vector 0 0)))
      
      
      ;test parsing of ellipses template
      (let*
          ([template
            (parse-transformer-template
-            '((a ...)) (hash 'a 1))])
+            '((a ...)) (vector 1) (hash 'a 0))])
        (check-equal?
         template
         (template-list 
@@ -257,11 +278,11 @@
            (list
             (ellipses-template
              '(a ...)
-             (template-identifier 'a 1)
+             (template-identifier 'a 1 0)
              1
              0
-             (hash 'a (set 1))
-             (set 'a))))))))
+             (hash '0 (set 1))
+             (set 0))))))))
      
      ;test improper-template-list parsing
      ;commented this flawed test out for now. You can't make an improper list if the last value is a list!
@@ -270,7 +291,7 @@
      #;(let* ([template 
                (parse-transformer-template
                 '(a ... ... #f "c" #\5 6 . ((very nested) . lists))
-                (hash 'a 2) )])
+                (hash 'a 2) (hash 'a 0))])
          (check-equal?
           template
           (improper-template-list 
@@ -278,7 +299,7 @@
            (list
             (ellipses-template
              'a ;TODO syntax should probably include the ellipses too
-             (template-identifier 'a)
+             (template-identifier 'a 0)
              2
              (set 'a))
             (template-datum #f)
@@ -291,33 +312,34 @@
              (template-list
               '(very nested)
               (list
-               (template-identifier 'very)
-               (template-identifier 'nested))))
-            (template-identifier 'lists)))))
+               (template-identifier 'very 1)
+               (template-identifier 'nested 2))))
+            (template-identifier 'lists 3)))))
      
      ;test combination of an ellipses matcher and template to match syntax and then output it
      ;tests when an identifier appears in multiple positions in a template with different ellipses nestings
      ;tests when the ellipses nesting between matcher and template don't match
-     (let* ([pattern
-             (parse-transformer-pattern
-              '((a ...) b) (set))]
-            [pattern-nesting 
-             (compute-ellipses-nesting pattern)]
-            [parse (curryr parse-transformer-template pattern-nesting)]
-            [template1
-             (parse
-              '(a ...))]
-            [template2
-             (parse
-              '(b c d f))]
-            [template3 
-             (parse
-              '(g (f 'b (h a ...) "a" b)))]
-            [template4
-             (parse
-              '((a b) ...))]
-            [bad-syntax1
-             '(a (a ...) b)])
+     (let*-values 
+         ([(pattern register size)
+           (parse-transformer-pattern
+            '((a ...) b) (set))]
+          [(pattern-nesting) 
+           (compute-ellipses-nesting pattern size)]
+          [(parse) (λ (t) (parse-transformer-template t pattern-nesting register))]
+          [(template1)
+           (parse
+            '(a ...))]
+          [(template2)
+           (parse
+            '(b c d f))]
+          [(template3) 
+           (parse
+            '(g (f 'b (h a ...) "a" b)))]
+          [(template4)
+           (parse
+            '((a b) ...))]
+          [(bad-syntax1)
+           '(a (a ...) b)])
        #;(for ([template (list template1 template2 template3 template4)])
            (verify-template-ellipses-nesting template pattern-nesting))
        (for ([template (list bad-syntax1)])
@@ -333,31 +355,32 @@
              '(5 ...)]
             [really-nested-identifier-syntax
              '((1 2 3 . (4 5 . a)) ...)])
-       (check-exn syntax-error? (lambda () (parse-transformer-template bad-syntax (hash 'a 1))))
-       (parse-transformer-template really-nested-identifier-syntax (hash 'a 1))
+       (check-exn syntax-error? (lambda () (parse-transformer-template bad-syntax (vector 1) (hash 'a 0))))
+       (parse-transformer-template really-nested-identifier-syntax (vector 1) (hash 'a 0))
        #t)
      
      
      ;tests that verify-template-ellipses-nesting works correctly with 
      ; varying ways of nesting an identifier in multiple ellipses in a template
-     (let* ([pattern
-             (parse-transformer-pattern
-              '((((a ...) ...)) ...) (set))]
-            [nesting (compute-ellipses-nesting pattern)]
-            [parse (curryr parse-transformer-template nesting)]
-            [good1
-             (parse
-              '((a ... ...) ...))]
-            [good2
-             (parse
-              '(a ... ... ...))]
-            [good3
-             (parse
-              '((a ...) ... ...))]
-            [bad1
-             '((a ... ... ...) ...)]
-            [bad2
-             '((a ... ...) ... ...)])
+     (let*-values
+         ([(pattern register size)
+           (parse-transformer-pattern
+            '((((a ...) ...)) ...) (set))]
+          [(nesting) (compute-ellipses-nesting pattern size)]
+          [(parse) (λ (t) (parse-transformer-template t nesting register))]
+          [(good1)
+           (parse
+            '((a ... ...) ...))]
+          [(good2)
+           (parse
+            '(a ... ... ...))]
+          [(good3)
+           (parse
+            '((a ...) ... ...))]
+          [(bad1)
+           '((a ... ... ...) ...)]
+          [(bad2)
+           '((a ... ...) ... ...)])
        #;(for ([t (list good1 good2 good3)])
            (verify-template-ellipses-nesting t nesting))
        (for ([t (list bad1 bad2)])
@@ -431,30 +454,38 @@
      ;Basically a template is created and used to make a macro.
      ;That macro is then invoked and its resulting syntax is checked.
      (let* 
-         ([pattern-ids (hash 'a 1 'b 1 'c 1 'd 2)]
+         ([pattern-nestings (vector 1 1 1 2)]
+          [pattern-indeces (hash 'a 0 'b 1 'c 2 'd 3)]
           [template
            (parse-transformer-template
             '((a ...) ((b c (d ...)) ...) . (e f g ('h "i" (#\k)) 'l))
-            pattern-ids)]
-          [reg-ids (find-regular-ids template (compose not (curry hash-has-key? pattern-ids)))]
-          [rewriter (make-rewriter template pattern-ids)]
+            pattern-nestings
+            pattern-indeces)]
+          [reg-ids (find-regular-ids template (compose not (curry hash-has-key? pattern-indeces)))]
+          [rewriter (make-rewriter template pattern-nestings pattern-indeces)]
           [sub-map 
            (hash 
             'a (hash 1 (list 1 2 3))
             'b (hash 1 (list 4 5 6))
             'c (hash 1 (list 7 8 9))
             'd (hash 2 '((10 11 12) (13 14 15) (16 17 18)))
-            'e (hash 0 'e.1)
-            'f (hash 0 'f.1)
-            'g (hash 0 'g.1)
-            'quote (hash 0 'quote.1)
-            'h (hash 0 'h.1)
-            'l (hash 0 'l.1))])
+            'e 'e.1
+            'f 'f.1
+            'g 'g.1
+            'quote 'quote.1
+            'h 'h.1
+            'l 'l.1)])
+       (define pvec 
+         (vector (list 1 2 3) (list 4 5 6) (list 7 8 9) '((10 11 12) (13 14 15) (16 17 18))))
+       (define tp-vec (make-vector 4))
+       (cfor (i 0 (< i 4) (add1 i))
+             (vector-set! tp-vec i (make-vector (add1 (vector-ref pattern-nestings i))))
+             (vector-set! (vector-ref tp-vec i) (vector-ref pattern-nestings i) (vector-ref pvec i)))
        (check-equal? 
         reg-ids
         (set 'e 'f 'g 'quote 'h 'l))
        (check-equal?
-        (rewriter sub-map)
+        (rewriter sub-map tp-vec)
         '((1 2 3) ((4 7 (10 11 12)) (5 8 (13 14 15)) (6 9 (16 17 18))) . 
                   (e.1 f.1 g.1 ((quote.1 h.1) "i" (#\k)) (quote.1 l.1)))))
      

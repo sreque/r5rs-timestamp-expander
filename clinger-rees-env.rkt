@@ -57,12 +57,8 @@
       [else (error (format "invalid syntax for letrec expression. syntax=~a" syntax))]))
   
   (set! r5rs-top-level-env (hash-set r5rs-top-level-env 'letrec letrec-macro-optimized))
-  ;An optimized letrec needs to tranform into ((lambda (var ...) (set! var init) ... body ...) 'undefined ...)
-    ;needs to extend environment with new lambda-denoting symbol
 
-  ;even more optimized! transform to (begin (set! var init) .... body ...)
-    ;manually extend use environment with vars, doing the rewriting ourselves manually.
-    ;needs to extend with new begin-denoting symbol
+  ;We replace this definition of letrec with the more optimized one above
   #;(define-macro letrec
     (syntax-rules () 
       [(_ ((var init) ...) . body) 
