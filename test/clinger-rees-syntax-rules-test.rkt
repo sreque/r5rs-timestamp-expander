@@ -278,7 +278,7 @@
            (list
             (ellipses-template
              '(a ...)
-             (template-identifier 'a 1 0)
+             (template-pattern-identifier 'a 1 0)
              1
              0
              (hash '0 (set 1))
@@ -299,7 +299,7 @@
            (list
             (ellipses-template
              'a ;TODO syntax should probably include the ellipses too
-             (template-identifier 'a 0)
+             (template-pattern-identifier 'a 0)
              2
              (set 'a))
             (template-datum #f)
@@ -312,9 +312,9 @@
              (template-list
               '(very nested)
               (list
-               (template-identifier 'very 1)
-               (template-identifier 'nested 2))))
-            (template-identifier 'lists 3)))))
+               (template-literal-identifier 'very 0)
+               (template-literal-identifier 'nested 1))))
+            (template-literal-identifier 'lists 2)))))
      
      ;test combination of an ellipses matcher and template to match syntax and then output it
      ;tests when an identifier appears in multiple positions in a template with different ellipses nestings

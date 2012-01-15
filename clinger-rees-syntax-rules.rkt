@@ -29,7 +29,9 @@
          (current-continuation-marks)
          syntax))]))
   
-  (struct syntax-rule (matcher rewriter regular-ids def-env id-depths))  
+ (define (env-lookup env id) (hash-ref env id (denotation id)))
+  
+  (struct syntax-rule (matcher rewriter reg-idx->id def-env id-depths))  
   ;def-env is the environment at the time of definition
   ;it needs to be combined with the pattern env and the rewrite-env
   ;id-set is the set of all identifiers that appear in an output pattern that are not pattern variables
@@ -37,15 +39,6 @@
   ;all identifiers have to be rewritten, whether they are free or bound, because they may be rebound by the macro
   (struct output-generator (generator def-env id-set ellipses-env) 
     #:transparent)
-  
-  ;Should we create a separate data type for environments to restrict operations on them?
-  (define (env-lookup env id)
-    (hash-ref env id (denotation id)))
-  
-  (define (merge-envs env1 env2)
-    (for/fold ((result env1))
-      (((k v) (in-hash env2)))
-      (hash-set result k v)))
   
   (struct denotation (id) #:transparent)
   
@@ -55,20 +48,24 @@
      (λ () counter) 
      (λ () (define result counter) (set! counter (add1 counter)) result)))
   
-  (define (make-id-registrar)
+  (define (make-id-registrar #:allow-duplicates (allow-duplicates #f))
     (define-values (num-getter num-incr) (make-incrementer))
     (define register (hash))
     (values 
      (λ () register)
      num-getter
      (λ (id)
-       (when (hash-has-key? register id)
-         (raise-syntax-error#
-          id
-          (format "duplicate pattern id detected: ~a" id)))
-       (define new-idx (num-incr)) 
-       (set! register (hash-set register id new-idx)) 
-       new-idx)))
+       (define prev (hash-ref register id (void)))
+       (if (void? prev)
+           (let ()
+             (define new-idx (num-incr)) 
+             (set! register (hash-set register id new-idx)) 
+             new-idx)
+           (if allow-duplicates
+               prev
+               (raise-syntax-error#
+                id
+                (format "duplicate pattern id detected: ~a" id)))))))
   
   ;This function assumes for performance reasons that both matcher-list and syntax-list are proper lists of the same length.
   (define (merge-match-results-lazy matcher-list syntax-list use-env pvec)
@@ -82,33 +79,6 @@
                 (loop
                  (unsafe-cdr rem-matchers)
                  (unsafe-cdr rem-syntax)))))))
-  
-  #;(define (merge-match-results seq)
-    (let/ec break
-      (for/fold ((cur-env (hash)))
-        ((result (in-list seq)))
-        (if (pattern-mismatch? result)
-            (break result)
-            (merge-envs cur-env result)))))
-  
-  ;foldl that requires the input lists to all be the same size
-  ;this is not currently used
-  (define (foldl-exact proc init . lists)
-    (define (invoke-loop cur-value arg-lists)
-      (loop (apply proc 
-                   (cons cur-value 
-                         (for/list ([v (in-list arg-lists)]) (car v)))
-                   (for/list ([v (in-list arg-lists)]) (cdr v)))))
-    
-    (define (loop cur-value lists)
-      (if (memv '() lists)
-          (begin
-            (for ([v (in-list lists)])
-              (when (not (eqv? v '()))
-                (raise (error "lists of differing size"))))
-            cur-value)
-          (invoke-loop cur-value lists)))
-    (invoke-loop init lists))
   
   (struct input-pattern (source) #:transparent)
   (struct output-template (source) #:transparent)
@@ -134,7 +104,8 @@
     (make-pattern-struct datum))
   
   (begin
-    (make-template-struct template-identifier ellipses-depth vector-idx)
+    (make-template-struct template-regular-identifier vector-idx)
+    (make-template-struct template-pattern-identifier ellipses-depth vector-idx)
     (make-template-struct ellipses-template inner-template num-ellipses num-outer-ellipses id-depths anchor-ids)
     (make-template-struct template-list sub-templates)
     (make-template-struct improper-template-list sub-templates tail-template)
@@ -360,15 +331,8 @@
                            "ellipses must occur after a pattern inside of a syntax list"
                            (current-continuation-marks)
                            syntax))]))]
-           [else
-            (parse-list 
-             (cons (recur first) parsed-stack)
-             rest)])]
-        [else
-         (improper-list
-          syntax
-          (reverse parsed-stack)
-          (recur remaining-list))]))
+           [else (parse-list (cons (recur first) parsed-stack) rest)])]
+        [else (improper-list syntax (reverse parsed-stack) (recur remaining-list))]))
     (cond
       [(or (cons? syntax) (null? syntax))
        (parse-list '() syntax)]
@@ -395,15 +359,14 @@
   (define (merge-hash-of-sets a b) (merge-hashes a b set-union))
   
   ;returns a map from all pattern ids in a template to a set of depth requests for that template
-  (define (find-pattern-ids predicate template)
+  (define (template-pattern-depths template)
     (define result
       (let loop ([t template]
                  [ids (hash)])
         (match t
-          [(template-identifier id depth idx)
-           (if  (predicate idx)
-               (hash-set ids idx (set-add (hash-ref ids idx (set)) depth))
-               ids)]
+          [(template-pattern-identifier id depth idx)
+           (hash-set ids idx (set-add (hash-ref ids idx (set)) depth))]
+          [(template-regular-identifier id dx) ids]
           [(ellipses-template _ inner en oen more-ids anchor-ids)
            ;if an inner template has an outer-depth of 0, then it has no anchor ids.
            ;this is a hack, but it works for now.
@@ -418,17 +381,22 @@
            (loop tail (loop (template-list source xs) ids))]
           [(template-datum _) ids])))
     result)
-  
+
   ;multiply a value v c times, where multiplication is cons and 0 is '(). Results are undefined if c is negative.
   (define (list-mult v c)
     (let loop ((cur null) (rem c))
       (if (zero? rem)
           cur
           (loop (cons v cur) (sub1 rem)))))
-  
   (define (parse-transformer-template syntax pattern-nestings pattern-indeces #:outer-ellipses-nesting (outer-ellipses-nesting 0))
+    (define-values (get-register get-register-size add-to-register) (make-id-registrar #:allow-duplicates #t))
+    (define template
+      (parse-transformer-template-recursive syntax pattern-nestings pattern-indeces add-to-register #:outer-ellipses-nesting outer-ellipses-nesting))
+    (values template (get-register) (get-register-size)))
+  
+    (define (parse-transformer-template-recursive syntax pattern-nestings pattern-indeces add-to-register #:outer-ellipses-nesting (outer-ellipses-nesting 0))
     (define-syntax recur (syntax-rules () 
-                           [(_ s n) (parse-transformer-template s pattern-nestings pattern-indeces #:outer-ellipses-nesting n)]
+                           [(_ s n) (parse-transformer-template-recursive s pattern-nestings pattern-indeces add-to-register #:outer-ellipses-nesting n)]
                            [(_ s) (recur s outer-ellipses-nesting)]))
     (define (parse-list parsed-stack remaining-list)
       #;(printf "  parse-list: ~a ~a\n" parsed-stack remaining-list)
@@ -457,7 +425,7 @@
             (define template
               (if (zero? ellipses-count)
                   inner-template
-                  (let* ([id-depths (find-pattern-ids (λ (idx)  (>= idx 0)) inner-template)]
+                  (let* ([id-depths (template-pattern-depths inner-template)]
                          [anchor-id-finder (λ (id-depths) 
                                              (for/fold ([result (set)])
                                                (((id depths) (in-hash id-depths)))
@@ -495,22 +463,26 @@
           (reverse parsed-stack)
           (recur remaining-list outer-ellipses-nesting))]))
       #;(printf "parser-transformer-template: ~a list=~a\n" syntax (list? syntax))
-    (cond
-      [(or (cons? syntax) (null? syntax))
-       (parse-list '() syntax)]
-      [(symbol? syntax)
-       (define idx (hash-ref pattern-indeces syntax -1))
-       (if (and (>= idx 0) (> (unsafe-vector*-ref pattern-nestings idx)  outer-ellipses-nesting))
-           (raise-syntax-error#
-            syntax
-            (format "Ellipses nesting of identifier ~a in template is less than its pattern nesting. pattern-nesting=~a, template-nesting=~a." syntax (hash-ref pattern-nestings syntax 0) outer-ellipses-nesting))
-           (template-identifier syntax outer-ellipses-nesting idx))]
-      [(syntax-datum? syntax)
-       (template-datum syntax)]
-      [else (raise-syntax-error# 
-             syntax
-             (format "Unrecognized type for syntax: ~a" syntax))]))
-  
+      (cond
+        [(or (cons? syntax) (null? syntax))
+         (parse-list '() syntax)]
+        [(symbol? syntax)
+         (define idx (hash-ref pattern-indeces syntax -1))
+         (if (>= idx 0)
+             (begin
+               (when (> (unsafe-vector*-ref pattern-nestings idx)  outer-ellipses-nesting)
+                 (raise-syntax-error#
+                  syntax
+                  (format "Ellipses nesting of identifier ~a in template is less than its pattern nesting. pattern-nesting=~a, template-nesting=~a."
+                          syntax (hash-ref pattern-nestings syntax 0) outer-ellipses-nesting)))
+               (template-pattern-identifier syntax outer-ellipses-nesting idx))
+             (template-regular-identifier syntax (add-to-register syntax)))]
+        [(syntax-datum? syntax)
+         (template-datum syntax)]
+        [else (raise-syntax-error# 
+               syntax
+               (format "Unrecognized type for syntax: ~a" syntax))]))
+    
   ;Computes how many ellipses apply to each identifier in a pattern object.
   ;Throws a syntax-error if a duplicate variable use is detected.
   ;This function serves two purposes for now because both purposes involve almost identical work.
@@ -542,13 +514,12 @@
   
   ;finds identifiers that aren't pattern identifiers
   ;Really this function conceptually puts all identifiers in a list and then filters them based on the predicate.
-  (define (find-regular-ids template predicate)
+  (define (find-regular-ids template)
     (define (dfs t result)
       (match t
-        [(template-identifier id depth idx)
-         (if (< idx 0)
-             (set-add result id)
-             result)]
+        [(template-regular-identifier id idx)
+         (set-add result id)]
+        [(template-pattern-identifier _ _ _) result]
         [(ellipses-template _ inner _ _ _ _)
          (dfs inner result)]
         [(template-list _ inner-templates)
@@ -677,22 +648,22 @@
   ; converts a template struct into a function of the form 
   ; identifier-substitution-map -> syntax.
   (define (make-rewriter template pattern-depths pattern-indexes)
-    (define (recur template) (make-rewriter template pattern-depths pattern-indexes))
+    (define-syntax recur (syntax-rules ()  [(_ template) (make-rewriter template pattern-depths pattern-indexes)]))
     (define rewriter-fuser 
       (match-lambda
         ((? ellipses-template?) append)
         (else cons)))
     (define (list-fuser rewriters fusers base-case-function)
-      (lambda (sub-map pvec)
+      (lambda (pvec lvec)
         (foldr 
-         (lambda (r f a) (f (r sub-map pvec) a))
-         (base-case-function sub-map pvec) rewriters fusers)))
+         (lambda (r f a) (f (r pvec lvec) a))
+         (base-case-function pvec lvec) rewriters fusers)))
     #;(printf "making rewriter for template: ~a\n" template)
     (match template
-      [(template-identifier id depth idx)
-       (if (< idx 0)
-           (lambda (sub-map pvec) (hash-ref sub-map id))
-           (lambda (sub-map pvec) #;(printf "sub-map=~a id=~a depth=~a\n" sub-map id depth) (unsafe-vector*-ref (unsafe-vector*-ref pvec idx) 0)))]
+      [(template-pattern-identifier id depth idx)
+       (lambda (pvec lvec) (unsafe-vector*-ref (unsafe-vector*-ref pvec idx) 0))]
+      [(template-regular-identifier id idx)
+       (λ (pvec lvec) (unsafe-vector*-ref lvec idx))]
       [(ellipses-template source inner ellipses-count outer-ellipses-count id-depths anchor-ids)
        ;I apologize in advance to anyone, including my future self, that has to maintain this chunk of code.
        ;Oh my gosh I'm having to maintain it right now!
@@ -703,9 +674,7 @@
        (define anchor-cur-depth (- anchor-depth outer-ellipses-count))
        (define rem-depth (- anchor-cur-depth outer-ellipses-count))
        (assert (>= rem-depth 0) (format "rem-depth=~a anchor-id=~a anchor-depth=~a outer-ellipses-count=~a ellipses-count=~a" rem-depth anchor-id anchor-depth outer-ellipses-count ellipses-count))
-       (lambda (sub-map pvec)
-         (define anchor-val (unsafe-vector*-ref (unsafe-vector*-ref pvec anchor-idx) (- anchor-depth outer-ellipses-count)))
-         ;Each value is either null or a list containing four values:
+       ;Each value is either null or a list containing four values:
          ;the identifier to be acted upon, it's requested depth, its replication-depth value (0 if not replicated), 
          ;and the function that will actually do the work on the value  
          ;the id's new depth for sub-expressions can be inferred to be requested-depth - ellipses-count + replication-depth
@@ -727,33 +696,35 @@
                          ;anchor ids are the simplest. They get pre-flattened by ellipses-count - 1, since we later call map, which implicitly flattens by 1.
                          [(and anchor-id? (eqv? depth pattern-depth))
                           #;(printf "found anchor-id ~a at depth=~a\n" id depth)
-                          (list id-idx (- pattern-depth outer-ellipses-count) 0 (λ (vs) (flatten# vs (sub1 ellipses-count))))]
+                          (list id-idx (- pattern-depth outer-ellipses-count) 0 (λ (vs _) (flatten# vs (sub1 ellipses-count))))]
                          [(>= depth-diff 0)
                           ;this means we will need to do some replicating based on an anchor id
                           (if (<= depth-diff ellipses-count)
                               ;because of multiple ellipses, we will replicate and flatten as one step
                               ;TODO refactor code common between the anchor-id case and this case
-                              (list id-idx pattern-depth depth-diff (λ (vs) (flatten# (replicate vs anchor-val depth-diff) (sub1 ellipses-count))))
+                              (list id-idx pattern-depth depth-diff (λ (vs anchor-val) (flatten# (replicate vs anchor-val depth-diff) (sub1 ellipses-count))))
                               ;I honestly don't remember what this branch means.
                               '())]
                          [else
                           ;We are treating it the same as an anchor id. How is it not an anchor id at this point? Should we error out here instead?
-                          (list id-idx (- depth outer-ellipses-count) 0 (λ (vs) (flatten# vs (sub1 ellipses-count))))]))))))
+                          (list id-idx (- depth outer-ellipses-count) 0 (λ (vs _) (flatten# vs (sub1 ellipses-count))))]))))))
+         (define rep-depths
+           (for/list ([v (in-list sub-map-additions)]) (unsafe-car (unsafe-cdr (unsafe-cdr  v)))))
+         
+       (lambda (pvec lvec)
+         (define anchor-val (unsafe-vector*-ref (unsafe-vector*-ref pvec anchor-idx) (- anchor-depth outer-ellipses-count)))
          ;the values before flattening/replicating. This will only be used to verify that lengths are the same for all values.
          (define pre-xss
            (for/list ([v (in-list sub-map-additions)])
              (match-define (cons id  (cons depth _)) v)
              (unsafe-vector*-ref (unsafe-vector*-ref pvec id) depth)))
-         (define rep-depths
-           (for/list ([v (in-list sub-map-additions)]) (unsafe-car (unsafe-cdr (unsafe-cdr  v)))))
          ;this is where we verify that value lengths are correct. We could check this after flattening and only use check-lengths.
          ;This would be faster but would make certain edge case macro invocations valid that should result in errors, as we lose information during the flattenings.
          (check-lengths-with-rep-depths source pre-xss rep-depths ellipses-count)
          (define xss
            (for/list ([v (in-list sub-map-additions)])
              (match-define (list id depth rep-depth func) v)
-             (func (unsafe-vector*-ref (unsafe-vector*-ref pvec id) depth))))
-         #;(printf "xss=~a sub-map-additions=~a id-depths=~a sub-map=~a anchor-ids=~a source=~a\n" xss sub-map-additions id-depths sub-map anchor-ids source)
+             (func (unsafe-vector*-ref (unsafe-vector*-ref pvec id) depth) anchor-val)))
          (define transposed-xss (list-transpose xss))
          ;This is where we invoke our inner template multiple times using augmented substitution maps.
          (define values-to-restore
@@ -775,7 +746,7 @@
                  (let ()
                    (match-define (list id depth rep-depth f) add-info)
                    (unsafe-vector*-set! (unsafe-vector*-ref pvec id) (+ (- depth ellipses-count) rep-depth) arg))))
-             (inner-rewriter sub-map pvec)))
+             (inner-rewriter pvec lvec)))
          (for ([old-value (in-list values-to-restore)]
                [add-info (in-list sub-map-additions)])
            (match-define (list id depth rep-depth f) add-info)
@@ -804,14 +775,18 @@
     #;(printf "  template=~a\n" template-syntax)
     (define-values (pattern register register-size) (parse-transformer-pattern pattern-syntax literal-ids))
     (define ellipses-nesting (compute-ellipses-nesting pattern register-size))
-    (define template (parse-transformer-template 
-                      template-syntax
-                      ellipses-nesting
-                      register))
+    (define-values (template reg-register num-regs) 
+      (parse-transformer-template 
+       template-syntax
+       ellipses-nesting
+       register))
+    (define reg-idx->id (make-vector num-regs))
+    (for ([(k v) (in-hash reg-register)])
+      (unsafe-vector*-set! reg-idx->id v k))
     (syntax-rule 
      (make-matcher pattern def-env register register-size)
      (make-rewriter template ellipses-nesting register)
-     (find-regular-ids template (λ (v) (< (template-identifier-vector-idx v) 0))#;(λ (v) (not (hash-has-key? ellipses-nesting v))))
+     reg-idx->id
      def-env
      ellipses-nesting))
   
@@ -862,20 +837,21 @@
   (define (make-macro-transformer syntax-rules)
     ;assume at this point that syntax-rules is a non-empty list of syntax-rule structs.
     (define (rewrite rule syntax use-env pattern-env orig-sym-env)
-      (match-define (syntax-rule matcher rewriter regular-ids def-env pattern-nestings) rule)
-      (define pvec (make-vector (unsafe-vector*-length pattern-nestings)))
+      (match-define (syntax-rule matcher rewriter reg-idx->id def-env pattern-nestings) rule)
       (define num-pids (unsafe-vector*-length pattern-nestings))
+      (define pvec (make-vector num-pids))
       (cfor (i 0 (< i num-pids) (add1 i))
             (unsafe-vector*-set! pvec i (make-vector (add1 (unsafe-vector*-ref pattern-nestings i)))))
-      (define fresh-regular-env
-        (for/hash ([id (in-set regular-ids)])
-          (values id (gensym id))))
-      (define macro-env fresh-regular-env)
+      (define num-lits (unsafe-vector*-length reg-idx->id))
+      (define new-ids (make-vector num-lits))
+      (cfor (i 0 (< i num-lits) (add1 i))
+            (unsafe-vector*-set! new-ids i (gensym (unsafe-vector*-ref reg-idx->id i))))
       (cfor (i 0 (< i num-pids) (add1 i))
             (unsafe-vector*-set! (unsafe-vector*-ref pvec i) (unsafe-vector*-ref pattern-nestings i) (unsafe-vector*-ref pattern-env i))) 
       (define new-use-env
         (for/fold ((result use-env))
-          (([id new-id] (in-hash fresh-regular-env)))
+          ((id (in-vector reg-idx->id))
+           (new-id (in-vector new-ids)))
           (define cur-binding (hash-ref def-env id (void)))
           (define binding (if (void? cur-binding)
                               (denotation id)
@@ -884,9 +860,10 @@
           (hash-set result new-id binding)))
       (define new-orig-sym-env
         (for/fold ([result orig-sym-env])
-          (([id new-id] (in-hash fresh-regular-env)))
+          ((id (in-vector reg-idx->id))
+           (new-id (in-vector new-ids)))
           (hash-set result new-id id)))
-      (define new-syntax (rewriter macro-env pvec))
+      (define new-syntax (rewriter pvec new-ids))
       (values new-syntax new-use-env new-orig-sym-env))
     (if (null? syntax-rules)
         (lambda (syntax use-env orig-sym-env) (error "no rules provided, which means the macro invocation always fails"))
@@ -898,7 +875,7 @@
             (match rem-rules
               [(cons rule rest)
                (let ()
-                 (match-define (syntax-rule matcher rewriter regular-ids def-env pattern-nestings) rule)
+                 (match-define (syntax-rule matcher rewriter reg-idx->id def-env pattern-nestings) rule)
                  (define pvec (make-vector (unsafe-vector*-length pattern-nestings)))
                  (define match ((syntax-rule-matcher rule) rest-syntax use-env pvec))
                  (if (pattern-mismatch? match)
