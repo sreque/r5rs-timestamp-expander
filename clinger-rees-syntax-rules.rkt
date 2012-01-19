@@ -20,6 +20,20 @@
        (when cond
          (begin code ... (loop incr))))]))
   
+  (define (list:all? pred xs)
+    (if (null? xs)
+        #t
+        (if (not (pred (unsafe-car xs)))
+            #f
+            (list:all? pred (unsafe-cdr xs)))))
+  
+  (define (list:any? pred xs)
+    (if (null? xs)
+        #f
+        (if (pred (unsafe-car xs)) #t (list:any? pred (unsafe-cdr xs)))))
+    
+  (define (cons-or-null? v) (or (cons? v) (null? v)))
+  
   (define-syntax raise-syntax-error#
     (syntax-rules ()
       [(_ syntax msg)
@@ -379,7 +393,8 @@
              (loop x accum))]
           [(improper-template-list source xs tail)
            (loop tail (loop (template-list source xs) ids))]
-          [(template-datum _) ids])))
+          [(? syntax-datum?) ids]
+          [(? cons-or-null?) ids])))
     result)
 
   ;multiply a value v c times, where multiplication is cons and 0 is '(). Results are undefined if c is negative.
@@ -402,7 +417,10 @@
       #;(printf "  parse-list: ~a ~a\n" parsed-stack remaining-list)
       (match remaining-list
         ['()
-         (template-list syntax (reverse parsed-stack))]
+         (define elems (reverse parsed-stack))
+         (if (list:any? (λ (v) (output-template? v)) elems)
+             (template-list syntax elems)
+             elems)]
         [(cons first _rest)
          (cond
            [(eqv? '... first)
@@ -477,8 +495,7 @@
                           syntax (hash-ref pattern-nestings syntax 0) outer-ellipses-nesting)))
                (template-pattern-identifier syntax outer-ellipses-nesting idx))
              (template-regular-identifier syntax (add-to-register syntax)))]
-        [(syntax-datum? syntax)
-         (template-datum syntax)]
+        [(syntax-datum? syntax) syntax]
         [else (raise-syntax-error# 
                syntax
                (format "Unrecognized type for syntax: ~a" syntax))]))
@@ -526,7 +543,8 @@
          (for/fold ([r result]) ((sub-t (in-list inner-templates))) (dfs sub-t r))]
         [(improper-template-list _ ts tail)
          (for/fold ((r (dfs tail result))) ((t (in-list ts))) (dfs t r))]
-        [(template-datum _) result]))
+        [(? syntax-datum?) result]
+        [(? cons-or-null?) result]))
     (dfs template (set)))
   
   ;flattens a fixed number of levels of a list.
@@ -764,8 +782,10 @@
         (for/list ([t (in-list sub-templates)]) (recur t))
         (for/list ([t (in-list sub-templates)]) (rewriter-fuser t))
         tail-rewriter)]
-      [(template-datum d) 
-       (lambda (ignored ignore2) d)]))
+      [(? syntax-datum?) 
+       (lambda (ignored ignore2) template)]
+      [(? cons-or-null?) 
+       (λ (_ __) template)]))
   
   ;Parses a pattern/template pair under an environment and literal id list
   ; (syntax, syntax, hash-table, set) -> rule
