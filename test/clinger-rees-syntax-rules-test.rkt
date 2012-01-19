@@ -264,8 +264,8 @@
      
      
      ;test parsing of ellipses template
-     (let*
-         ([template
+     (let*-values
+         ([(template _ __)
            (parse-transformer-template
             '((a ...)) (vector 1) (hash 'a 0))])
        (check-equal?
@@ -325,7 +325,7 @@
             '((a ...) b) (set))]
           [(pattern-nesting) 
            (compute-ellipses-nesting pattern size)]
-          [(parse) (λ (t) (parse-transformer-template t pattern-nesting register))]
+          [(parse) (λ (t) (define-values (result _ __) (parse-transformer-template t pattern-nesting register)) result)]
           [(template1)
            (parse
             '(a ...))]
@@ -367,7 +367,7 @@
            (parse-transformer-pattern
             '((((a ...) ...)) ...) (set))]
           [(nesting) (compute-ellipses-nesting pattern size)]
-          [(parse) (λ (t) (parse-transformer-template t nesting register))]
+          [(parse) (λ (t) (define-values (result _ __) (parse-transformer-template t nesting register)) result)]
           [(good1)
            (parse
             '((a ... ...) ...))]
@@ -457,26 +457,18 @@
          ([pattern-nestings (vector 1 1 1 2)]
           [pattern-indeces (hash 'a 0 'b 1 'c 2 'd 3)]
           [template
-           (parse-transformer-template
-            '((a ...) ((b c (d ...)) ...) . (e f g ('h "i" (#\k)) 'l))
-            pattern-nestings
-            pattern-indeces)]
-          [reg-ids (find-regular-ids template (compose not (curry hash-has-key? pattern-indeces)))]
-          [rewriter (make-rewriter template pattern-nestings pattern-indeces)]
-          [sub-map 
-           (hash 
-            'a (hash 1 (list 1 2 3))
-            'b (hash 1 (list 4 5 6))
-            'c (hash 1 (list 7 8 9))
-            'd (hash 2 '((10 11 12) (13 14 15) (16 17 18)))
-            'e 'e.1
-            'f 'f.1
-            'g 'g.1
-            'quote 'quote.1
-            'h 'h.1
-            'l 'l.1)])
+           (let ()
+           (define-values (result reg-reg reg-reg-size) 
+             (parse-transformer-template
+              '((a ...) ((b c (d ...)) ...) . (e f g ('h "i" (#\k)) 'l))
+              pattern-nestings
+              pattern-indeces))
+             result)]
+          [reg-ids (find-regular-ids template)]
+          [rewriter (make-rewriter template pattern-nestings pattern-indeces)])
        (define pvec 
          (vector (list 1 2 3) (list 4 5 6) (list 7 8 9) '((10 11 12) (13 14 15) (16 17 18))))
+       (define rvec (vector 'e.1 'f.1 'g.1 'quote.1 'h.1 'l.1))
        (define tp-vec (make-vector 4))
        (cfor (i 0 (< i 4) (add1 i))
              (vector-set! tp-vec i (make-vector (add1 (vector-ref pattern-nestings i))))
@@ -485,7 +477,7 @@
         reg-ids
         (set 'e 'f 'g 'quote 'h 'l))
        (check-equal?
-        (rewriter sub-map tp-vec)
+        (rewriter tp-vec rvec)
         '((1 2 3) ((4 7 (10 11 12)) (5 8 (13 14 15)) (6 9 (16 17 18))) . 
                   (e.1 f.1 g.1 ((quote.1 h.1) "i" (#\k)) (quote.1 l.1)))))
      
