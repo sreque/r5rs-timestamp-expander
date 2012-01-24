@@ -34,15 +34,22 @@
 (when (not (eqv? 1 arg-len))
   (error (format "expected exactly one argument: got ~a" arg-len)))
 
-(define benchmark-dir (simplify-path (path->complete-path (vector-ref args 0))))
+(define benchmark-path (simplify-path (path->complete-path (vector-ref args 0))))
 
-(define sources 
-  (filter
-   (compose not void?)
-   (for/list ([path (in-directory benchmark-dir)])
-     (if (regexp-match? #rx"[.](scm|rkt)$" path)
-         (cons path (call-with-input-file path read-all))          
-         (void)))))
+(define sources
+  (map (λ (path) (cons path (call-with-input-file path read-all)))
+       (cond 
+         [(directory-exists? benchmark-path)
+          (filter
+           (compose not void?)
+           (for/list ([path (in-directory benchmark-path)])
+             (if (regexp-match? #rx"[.](scm|rkt)$" path)
+                 path          
+                 (void))))]
+         [(file-exists? benchmark-path)
+          (list benchmark-path)]
+         [else
+          (error(format "path does not refer to a file or directory: ~a" benchmark-path))])))
 
 #;(printf "~a\n" (for/list ([v sources]) (car v)))
 #;(exit)
@@ -52,7 +59,7 @@
     (define-values (_ cpu real gc) (benchmark 
                                     (λ () (call-with-values 
                                            (λ () (expand-program r5rs-top-level-env code)) list)) 0))
-    (printf "~a: real=~as cpu=~as gc=~as\n" (find-relative-path benchmark-dir path) (/ real 1000.0) (/ cpu 1000.0) (/ gc 1000.0))))
+    (printf "~a: real=~as cpu=~as gc=~as\n" (find-relative-path benchmark-path path) (/ real 1000.0) (/ cpu 1000.0) (/ gc 1000.0))))
 
 (define (profile-main)
   (for ([v sources])
