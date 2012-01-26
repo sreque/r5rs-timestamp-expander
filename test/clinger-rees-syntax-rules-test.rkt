@@ -92,8 +92,8 @@
             [pattern (literal-identifier id)]
             [bad-syntaxes (list 'a "b" #\x `(,id) #(x))]
             [empty-env (hash)]
-            [env1 (hash id (gensym id))]
-            [env2 (hash id (gensym id))]
+            [env1 (hash id (cons (gensym id) id))]
+            [env2 (hash id (cons (gensym id) id))]
             [id2 'y]
             [diff-env (hash id2 (hash-ref env1 id))])
        (for ([env (list empty-env env1 env2)])
@@ -487,12 +487,11 @@
          ([(rules) (parse-syntax-rules 
                     and-syntax (hash))]    
           [(macro) (make-macro-transformer rules)]
-          [(env) (hash 'and 'and 'if 'if)]
-          [(qenv) (hash)]
-          [(r1 e1 qe1) (macro '(and) env qenv)]
-          [(r2 e2 qe2) (macro '(and "bob") env qenv)]
-          [(r3 e3 qe3) (macro '(and #f #t) env qenv)]
-          [(qe3-rev) (invert-hash qe3)])
+          [(env) (hash 'and (cons 'and 'and) 'if (cons 'if 'if))]
+          [(r1 e1) (macro '(and) env)]
+          [(r2 e2) (macro '(and "bob") env)]
+          [(r3 e3) (macro '(and #f #t) env)]
+          #;[(qe3-rev) (invert-hash qe3)])
        (check-equal? #t r1)
        (check-equal? "bob" r2)
        (check-not-exn
@@ -500,14 +499,14 @@
           (match r3
             [(list (? (sym-matcher 'if)) #f (list (? (sym-matcher 'and)) #t) #f)
              #t])))
-       (check-equal? qe1 qenv)
-       (check-equal? qe2 qenv)
-       (check-quote-env qe3 '(if and)))
+       #;(check-equal? qe1 qenv)
+       #;(check-equal? qe2 qenv)
+       #;(check-quote-env qe3 '(if and)))
      
      ;with no local bindings for and and if, a macro should generate identifiers whose binding denotes the same top-level value as their original identifiers.
-     (let*-values
+     #;(let*-values
          ([(macro) (parse-syntax-transformer and-syntax (hash))]
-          [(s e qe) (macro '(and a b 1) (hash) (hash))]
+          [(s e) (macro '(and a b 1) (hash))]
           [(req) (invert-hash qe)]
           [(new-and new-if) (values (hash-ref req 'and) (hash-ref req 'if))])
        (check-equal? (length (hash-keys req)) 2)
@@ -521,12 +520,12 @@
                        [(who-cares a) (list a 'a)]) (hash))]
           [(macro) (make-macro-transformer rules)]
           [(env) (hash)]
-          [(r1 e1 qe1) (macro '(imagine-this-keyword-is-bound-to-the-macro (list 1 2 3)) (hash) (hash))])
+          [(r1 e1) (macro '(imagine-this-keyword-is-bound-to-the-macro (list 1 2 3)) (hash))])
        (check-not-exn
         (lambda ()
           (match r1
             [(list (? (sym-matcher 'list)) (list 'list 1 2 3) (list (? (sym-matcher 'quote)) (list 'list 1 2 3))) #t])))
-       (check-quote-env qe1 '(quote list)))
+       #;(check-quote-env qe1 '(quote list)))
      
      ;TODO add test for edge case of syntax-rules with empty rule list
      ;we should be handling this correctly but an automated test would make us more certain

@@ -51,8 +51,8 @@
       (reduce-letrec-syntax
        `(((my-and ,and-macro-syntax))
          ,body-syntax) (hash 'if 'if))]
-     [(macro) (hash-ref env 'my-and)]
-     [(s1 e1 qe1) (macro body-syntax-returned env (hash))])
+     [(macro) (car (hash-ref env 'my-and))]
+     [(s1 e1) (macro body-syntax-returned env)])
   (check-equal? (set 'my-and 'if) (apply set (hash-keys env)))
   ;TODO convert these print statements into actual assertions. 
   ;The print statements look like they are printing out the right things for now.
@@ -89,7 +89,7 @@
   (check-not-exn
    (λ ()
      (match extended-env
-       [(hash-table ('a (? (sym-matcher 'a))) ('b (? (sym-matcher 'b))) ('c (? (sym-matcher 'c)))) #t]))) )
+       [(hash-table ('a (cons (? (sym-matcher 'a)) 'a)) ('b (cons (? (sym-matcher 'b)) 'b)) ('c (cons (? (sym-matcher 'c)) 'c))) #t]))))
 
 ;test reduce-lambda with multiple body expressions
 (let*-values
@@ -129,68 +129,70 @@
                `(syntax-rules ()
                   [(id) ,quote-expr])
                (hash))]
-     [(syntax local-env quote-env) (macro '(id) (hash) (hash))])
+     [(syntax local-env) (macro '(id) (hash))])
   (check-not-exn
    (λ () 
      (match syntax
        [(list (? (sym-matcher 'quote)) (list (? (sym-matcher 'a)) (? (sym-matcher 'b)) (? (sym-matcher 'c)) 1 2 3 "you" "and" "me" (? (sym-matcher 'we-make-three)))) #t])))
-  (check-equal? (unquote-syntax syntax quote-env) quote-expr)
-  (check-equal? (expand-inner-syntax syntax r5rs-top-level-env local-env quote-env) quote-expr))
+  (check-equal? (unquote-syntax syntax local-env) quote-expr)
+  (check-equal? (expand-inner-syntax syntax r5rs-top-level-env local-env) quote-expr))
 
 ;test symbol expansion, both user symbols and macro-generated symbols
 (let*-values
     ([(sym) 'symbol]
      [(empty-env) (hash)]
-     [(sym-defined-env) (hash sym sym)]
+     [(sym-defined-env) (hash sym (cons sym sym))]
+     [(top-defined-env) (hash sym sym)]
      [(macro) (parse-syntax-transformer
                '(syntax-rules ()
                   [(id) (display "hello world!")]) empty-env)]
-     [(sym-defined-as-macro-env) (hash sym macro)]
+     [(sym-defined-as-macro-env) (hash sym (cons macro sym))]
      [(uses-sym-syntax) `(syntax-rules ()
                             [(id)  (,sym 1 2 3)])]
      [(macro-undefined) (parse-syntax-transformer uses-sym-syntax empty-env)]
      [(macro-defined) (parse-syntax-transformer uses-sym-syntax sym-defined-env)])
-  (check-equal? (expand-inner-syntax sym empty-env sym-defined-env empty-env) sym)
-  (check-equal? (expand-inner-syntax sym sym-defined-env empty-env empty-env) sym)
+  (check-equal? (expand-inner-syntax sym empty-env sym-defined-env) sym)
+  (check-equal? (expand-inner-syntax sym top-defined-env empty-env) sym)
   ;not checking for unbound variables anymore
   #;(check-exn syntax-error?
-             (λ () (expand-inner-syntax sym empty-env empty-env empty-env)))
+             (λ () (expand-inner-syntax sym empty-env empty-env)))
+  
   (check-exn syntax-error?
-             (λ () (expand-inner-syntax sym empty-env (hash-set sym-defined-env sym macro) empty-env)))
+             (λ () (expand-inner-syntax sym empty-env (hash-set sym-defined-env sym (cons macro sym)))))
   (check-equal?
-   (expand-inner-syntax '(id) empty-env (hash-set sym-defined-env 'id macro-defined) empty-env) `(,sym 1 2 3))
+   (expand-inner-syntax '(id) empty-env (hash-set sym-defined-env 'id (cons macro-defined 'id))) `(,sym 1 2 3))
   #;(check-exn syntax-error?
-             (λ () (expand-inner-syntax '(id) empty-env (hash-set sym-defined-env 'id macro-undefined) empty-env))))
+             (λ () (expand-inner-syntax '(id) empty-env (hash-set sym-defined-env 'id macro-undefined)))))
      
 ;test expanding data
 (let*
-    ([expand (λ (v) (expand-inner-syntax v r5rs-top-level-env (hash) (hash)))]
+    ([expand (λ (v) (expand-inner-syntax v r5rs-top-level-env (hash)))]
      [test (λ (v) (check-equal? (expand v) v))])
   (test #\d)
   (test "string")
   (test 5.5))
 
 ;test expanding literals supported by the Racket reader but not by r5rs
-(check-exn syntax-error? (λ () (expand-inner-syntax #&17 r5rs-top-level-env (hash) (hash))))
+(check-exn syntax-error? (λ () (expand-inner-syntax #&17 r5rs-top-level-env (hash))))
 
 ;vectors not yet supported
-(check-exn syntax-error? (λ () (expand-inner-syntax #(1 2 3) (hash) (hash) (hash))))
+(check-exn syntax-error? (λ () (expand-inner-syntax #(1 2 3) (hash) (hash))))
 
 ;an empty list is illegal syntax
-(check-exn syntax-error? (λ () (expand-inner-syntax '() (hash) (hash) (hash))))
+(check-exn syntax-error? (λ () (expand-inner-syntax '() (hash) (hash))))
 ;TODO: test handle-list
 
 ;check procedure application of a symbol
 (let*
     ([syntax '(+ 1 2 3)]
-     [expanded (expand-inner-syntax syntax r5rs-top-level-env (hash) (hash))])
+     [expanded (expand-inner-syntax syntax r5rs-top-level-env (hash))])
   (check-not-exn
    (λ () (match expanded [(list (? (sym-matcher '+)) 1 2 3) #t]))))
 
 ;check procedure application where the operator is a a list
 (let*
     ([syntax '((plus) 4 5 6)]
-     [expanded (expand-inner-syntax syntax (hash) (hash 'plus 'plus) (hash))])
+     [expanded (expand-inner-syntax syntax (hash) (hash 'plus (cons 'plus 'plus)))])
   (check-equal? expanded syntax))
 
 ;check handling of begin
@@ -199,8 +201,8 @@
     ([syntax '(begin (side-effects!) (return-value 'sym))]
      [expanded (expand-inner-syntax syntax
                                     (hash 'side-effects! 'side-effects!)
-                                    (hash 'return-value 'return-value)
-                                    (hash))])
+                                    (hash 'return-value (cons 'return-value 'return-value))
+                                    )])
   (check-equal? expanded '((lambda () (side-effects!) (return-value 'sym)))))
 
 ;test macro use
@@ -209,7 +211,8 @@
     ([macro-syntax '(syntax-rules () [(macro args ...) (list args ...)])]
      [macro (parse-syntax-transformer macro-syntax (hash))]
      [syntax '(append (macro 1 2 3) (macro 4 5 6))]
-     [expanded (expand-inner-syntax syntax (hash 'append 'append 'macro macro 'list 'list) (hash) (hash))])
+     #;(hash 'append (cons 'append 'append) 'macro (cons macro 'macro) 'list (cons 'list 'list))
+     [expanded (expand-inner-syntax syntax (hash 'append 'append 'macro macro 'list 'list) (hash))])
   (check-not-exn
    (λ () 
      (match expanded
@@ -217,22 +220,22 @@
      
 ;test illegal define
 (check-exn syntax-error?
-           (λ () (expand-inner-syntax '(define a 5) (hash) (hash) (hash))))
+           (λ () (expand-inner-syntax '(define a 5) (hash) (hash))))
 
 ;test illegal define-syntax`
 (check-exn syntax-error?
-           (λ () (expand-inner-syntax '(define-syntax bob (syntax-rules () [(bob dole) '()])) (hash) (hash) (hash))))
+           (λ () (expand-inner-syntax '(define-syntax bob (syntax-rules () [(bob dole) '()])) (hash) (hash))))
 
 ;shouldn't be able to apply values that can't resolve to functions
 (check-exn
  syntax-error?
  (λ ()
-   (expand-inner-syntax '("I'm a function! Really!" 'no 'you 'are 'not) (hash) (hash) (hash))))
+   (expand-inner-syntax '("I'm a function! Really!" 'no 'you 'are 'not) (hash) (hash))))
 
 ;test simple lambda expression expansion
 (let ([syntax 
        (expand-inner-syntax 
-        '(lambda (a b c) (+ a b c)) (hash '+ '+) (hash) (hash))])
+        '(lambda (a b c) (+ a b c)) (hash '+ '+) (hash))])
   (check-not-exn
    (λ ()
      (match syntax
@@ -248,7 +251,7 @@
                        ((m (syntax-rules ()
                              [(m) x])))
                      ((lambda (x) (m)) "inner"))) "outer")]
-       [expanded-syntax (expand-inner-syntax syntax (hash) (hash) (hash))])
+       [expanded-syntax (expand-inner-syntax syntax (hash) (hash))])
     (match-define
       #;(list (list 'lambda (list x1) (list 'begin (list (list 'lambda (list x2) x1) "inner"))) "outer")
       (list (list 'lambda (list x1) (list (list 'lambda (list x2) x1) "inner")) "outer")
@@ -267,7 +270,7 @@
       (define (d a b) (+ a b))
       (d (c) (c)))]
    [expanded-syntax
-    (cons 'begin (expand-inner-body-syntax body-syntax r5rs-top-level-env (hash) (hash)))])
+    (cons 'begin (expand-inner-body-syntax body-syntax r5rs-top-level-env (hash)))])
   ;the resulting syntax is getting complex enough that pattern matching feels like too much work
   (check-equal? 6 (eval expanded-syntax (make-base-namespace))))
 
@@ -295,9 +298,9 @@
          (define two 2)
          (plus (minus here vars more) (minus v1 v2 v3) hundred two))]
      [expanded1 
-      (expand-inner-syntax syntax r5rs-top-level-env (hash) (hash))]
+      (expand-inner-syntax syntax r5rs-top-level-env (hash))]
      [expanded2
-      (cons 'begin (expand-inner-body-syntax (list syntax) r5rs-top-level-env (hash) (hash)))])
+      (cons 'begin (expand-inner-body-syntax (list syntax) r5rs-top-level-env (hash)))])
   (check-equal? 98 (eval expanded1 (make-base-namespace)))
   (check-equal? 98 (eval expanded2 (make-base-namespace))))
 
@@ -313,7 +316,7 @@
   ;TODO: come up with a way to check the content of the exception
   (check-exn 
    syntax-error?
-   (λ () (expand-inner-syntax syntax r5rs-top-level-env (hash) (hash)))))
+   (λ () (expand-inner-syntax syntax r5rs-top-level-env (hash)))))
 
 ;simple test of expand-top-level with defines
 ;I'm punting on having the macro expander detect undefined variables for now

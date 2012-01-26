@@ -1,6 +1,7 @@
 (module clinger-rees-expander racket
   (require racket/unsafe/ops)
   (provide (except-out (all-defined-out) format))
+  #;(provide (all-defined-out))
   
   
   ;Temporary hack for performance. Ideally, we create two versions of the matcher module:
@@ -43,7 +44,11 @@
          (current-continuation-marks)
          syntax))]))
   
- (define (env-lookup env id) (hash-ref env id (denotation id)))
+ (define (env-lookup env id) 
+   (define value (hash-ref env id (void)))
+   (if (void? value)
+       (denotation id)
+       (unsafe-car value)))
   
   (struct syntax-rule (matcher rewriter reg-idx->id def-env id-depths))  
   ;def-env is the environment at the time of definition
@@ -144,7 +149,7 @@
         [(zero? point)
          (values null xs)]
         [(cons? xs)
-         (let-values ([(x y) (loop (cdr xs) (sub1 point))])
+         (let-values ([(x y) (loop (unsafe-cdr xs) (sub1 point))])
                 (if (void? x)
                     (values x y)
                     (values (cons (unsafe-car xs) x) y)))]
@@ -464,8 +469,8 @@
                       (when (set-empty? anchor-ids)
                         (raise-syntax-error#
                          inner-template
-                         (format "template contains no identifiers whose template depth matches its corresponding pattern depth. template-id-depths=~a patter-id-depths=~a template=~a" 
-                                 id-depths pattern-nestings (cons (output-template-source inner-template) (list-mult '... ellipses-count))))))
+                         (format "template contains no identifiers whose template depth matches its corresponding pattern depth. template-id-depths=~a pattern-id-depths=~a template=~a" 
+                                 id-depths pattern-nestings (cons (if (output-template? inner-template) (output-template-source inner-template) inner-template) (list-mult '... ellipses-count))))))
                     (ellipses-template 
                      (cons (output-template-source inner-template) (list-mult '... ellipses-count))
                      inner-template
@@ -492,7 +497,7 @@
                  (raise-syntax-error#
                   syntax
                   (format "Ellipses nesting of identifier ~a in template is less than its pattern nesting. pattern-nesting=~a, template-nesting=~a."
-                          syntax (hash-ref pattern-nestings syntax 0) outer-ellipses-nesting)))
+                          syntax (vector-ref pattern-nestings idx) outer-ellipses-nesting)))
                (template-pattern-identifier syntax outer-ellipses-nesting idx))
              (template-regular-identifier syntax (add-to-register syntax)))]
         [(syntax-datum? syntax) syntax]
@@ -646,7 +651,7 @@
       (let loop ([child-cdrs vals] 
                  [vals-left (sub1 lengths)])
         (define child-cars 
-          (foldr (λ (lst depth result) (cons (if (eqv? depth 0) (car lst) lst) result))
+          (foldr (λ (lst depth result) (cons (if (eqv? depth 0) (unsafe-car lst) lst) result))
                  '()
                  child-cdrs 
                  rep-depths))
@@ -654,7 +659,7 @@
         (when (> vals-left 0)
           (define new-child-cdrs 
             (foldr 
-             (λ (lst depth result) (cons (if (eqv? depth 0) (cdr lst) lst) result))
+             (λ (lst depth result) (cons (if (eqv? depth 0) (unsafe-cdr lst) lst) result))
              '()
              child-cdrs 
              rep-depths))
@@ -687,11 +692,11 @@
        ;Oh my gosh I'm having to maintain it right now!
        (define inner-rewriter (recur inner))
        (define anchor-list (set->list anchor-ids))
-       (define anchor-idx (car anchor-list))
+       (define anchor-idx (unsafe-car anchor-list))
        (define anchor-depth (unsafe-vector*-ref pattern-depths anchor-idx))
        (define anchor-cur-depth (- anchor-depth outer-ellipses-count))
        (define rem-depth (- anchor-cur-depth outer-ellipses-count))
-       (assert (>= rem-depth 0) (format "rem-depth=~a anchor-id=~a anchor-depth=~a outer-ellipses-count=~a ellipses-count=~a" rem-depth anchor-id anchor-depth outer-ellipses-count ellipses-count))
+       #;(assert (>= rem-depth 0) (format "rem-depth=~a anchor-id=~a anchor-depth=~a outer-ellipses-count=~a ellipses-count=~a" rem-depth anchor-id anchor-depth outer-ellipses-count ellipses-count))
        ;Each value is either null or a list containing four values:
          ;the identifier to be acted upon, it's requested depth, its replication-depth value (0 if not replicated), 
          ;and the function that will actually do the work on the value  
@@ -856,7 +861,7 @@
   ;hash-table no. 2 represents a mapping from re-written symbols to their original value
   (define (make-macro-transformer syntax-rules)
     ;assume at this point that syntax-rules is a non-empty list of syntax-rule structs.
-    (define (rewrite rule syntax use-env pattern-env orig-sym-env)
+    (define (rewrite rule syntax use-env pattern-env)
       (match-define (syntax-rule matcher rewriter reg-idx->id def-env pattern-nestings) rule)
       (define num-pids (unsafe-vector*-length pattern-nestings))
       (define pvec (make-vector num-pids))
@@ -873,22 +878,18 @@
           ((id (in-vector reg-idx->id))
            (new-id (in-vector new-ids)))
           (define cur-binding (hash-ref def-env id (void)))
-          (define binding (if (void? cur-binding)
-                              (denotation id)
-                              cur-binding))
+          (define binding
+            (if (void? cur-binding)
+                (cons (denotation id) id)
+                      cur-binding))
           #;(printf "expansion aliasing ~a to ~a\n" new-id binding)
           (hash-set result new-id binding)))
-      (define new-orig-sym-env
-        (for/fold ([result orig-sym-env])
-          ((id (in-vector reg-idx->id))
-           (new-id (in-vector new-ids)))
-          (hash-set result new-id id)))
       (define new-syntax (rewriter pvec new-ids))
-      (values new-syntax new-use-env new-orig-sym-env))
+      (values new-syntax new-use-env))
     (if (null? syntax-rules)
-        (lambda (syntax use-env orig-sym-env) (error "no rules provided, which means the macro invocation always fails"))
-        (lambda (syntax use-env orig-sym-env)
-          (define rest-syntax (cdr syntax))
+        (lambda (syntax use-env) (error "no rules provided, which means the macro invocation always fails"))
+        (lambda (syntax use-env)
+          (define rest-syntax (unsafe-cdr syntax))
           (let loop 
             ((match-failures '())
              (rem-rules syntax-rules))
@@ -900,7 +901,7 @@
                  (define match ((syntax-rule-matcher rule) rest-syntax use-env pvec))
                  (if (pattern-mismatch? match)
                       (loop (cons match match-failures) rest)
-                      (rewrite rule syntax use-env pvec orig-sym-env)))]
+                      (rewrite rule syntax use-env pvec)))]
               [else
                (error (format "match failed\nsyntax: ~a\nmatch errors: ~a" syntax (reverse match-failures)))])))))
   
