@@ -29,6 +29,41 @@
        (when cond
          (begin code ... (loop incr))))]))
   
+  ;transposes a list of lists.
+  (define (list-transpose xss)
+    (apply map list xss))
+  
+  (define (unsafe-map length f xs base-value)
+    (let loop ([i 0] [rem xs])
+      (if (unsafe-fx= i length)
+          base-value
+          (cons (f (unsafe-car rem)) (loop (unsafe-add1 i) (unsafe-cdr rem))))))
+  
+  (define (unsafe-map2 length f _xs _ys base-value)
+    (let loop ([i 0] [xs _xs] [ys _ys])
+      (if (unsafe-fx= i length)
+          base-value
+          (cons (f (unsafe-car xs) (unsafe-car xs)) (loop (unsafe-add1 i) (unsafe-cdr xs) (unsafe-cdr xs))))))
+  
+  (define (unsafe-map-with-list-tail _count f _xs)
+    (define count (unsafe-sub1 _count))
+    (let loop ([i 0] [xs _xs])
+      (if (unsafe-fx= i count)
+          (f (unsafe-car xs))
+          (cons (f (unsafe-car xs)) (loop (unsafe-add1 i) (unsafe-cdr xs))))))
+  
+  (define (unsafe-foldr count proc init _xs)
+    (let loop ([i 0] [xs _xs])
+      (if (unsafe-fx= i count)
+          init
+          (proc (unsafe-car xs) (loop (unsafe-add1 i) (unsafe-cdr xs))))))
+  
+ (define (unsafe-foldr2 count proc init _xs _ys)
+    (let loop ([i 0] [xs _xs] [ys _ys])
+      (if (unsafe-fx= i count)
+          init
+          (proc (unsafe-car xs) (unsafe-car ys)  (loop (unsafe-add1 i) (unsafe-cdr xs) (unsafe-cdr ys))))))
+  
   (define (list:all? pred xs)
     (if (null? xs)
         #t
@@ -673,22 +708,28 @@
              rep-depths))
           (loop new-child-cdrs (unsafe-sub1 vals-left))))))
   
-  ;transposes a list of lists.
-  (define (list-transpose xss)
-    (apply map list xss))
   ; converts a template struct into a function of the form 
   ; identifier-substitution-map -> syntax.
   (define (make-rewriter template pattern-depths pattern-indexes)
     (define-syntax recur (syntax-rules ()  [(_ template) (make-rewriter template pattern-depths pattern-indexes)]))
-    (define rewriter-fuser 
-      (match-lambda
-        ((? ellipses-template?) append)
-        (else cons)))
-    (define (list-fuser rewriters fusers base-case-function)
+    (define (rewriter-fusers xs)
+      (let loop ([rem xs])
+        (match rem
+          [(cons first rest)
+           (define-values (only-conses rewriters count) (loop rest))
+           (define is-ellipses? (ellipses-template? first))
+           (if is-ellipses?
+               (values (if (null? rest) 'at-end #f) (cons append rewriters) (unsafe-add1 count))
+               (values only-conses (cons cons rewriters) (unsafe-add1 count)))]
+          ['() (values #t '() 0)])))
+    (define (list-fuser count rewriters fusers base-case-function)
       (lambda (pvec lvec)
-        (foldr 
-         (lambda (r f a) (f (r pvec lvec) a))
-         (base-case-function pvec lvec) rewriters fusers)))
+        (unsafe-foldr2
+         count
+         (lambda (f r a) (f (r pvec lvec) a))
+         (base-case-function pvec lvec)
+         fusers
+         rewriters)))
     #;(printf "making rewriter for template: ~a\n" template)
     (match template
       [(template-pattern-identifier id depth idx)
@@ -784,16 +825,25 @@
            (unsafe-vector*-set! (unsafe-vector*-ref pvec id) depth-val old-value))
              result)]
       [(template-list _ inner-templates)
-       (list-fuser
-        (for/list ([t (in-list inner-templates)]) (recur t))
-        (for/list ([t (in-list inner-templates)]) (rewriter-fuser t))
-        (lambda (ignore ignore2) '()))]
+       (define-values (only-conses fusers count) (rewriter-fusers inner-templates))
+       (define sub-rewriters (for/list ([t (in-list inner-templates)]) (recur t)))
+       (match only-conses
+         [#t (λ (pvec lvec) (unsafe-map count (λ (r) (r pvec lvec)) sub-rewriters null))]
+         ['at-end (λ (pvec lvec) (unsafe-map-with-list-tail count (λ (r) (r pvec lvec)) sub-rewriters))]
+         [#f
+          (list-fuser
+           count
+           sub-rewriters
+           fusers
+           (lambda (ignore ignore2) '()))])]
       [(improper-template-list source sub-templates tail-template)
+       (define sub-rewriters (for/list ([t (in-list sub-templates)]) (recur t)))
+       (define-values (only-conses fusers count) (rewriter-fusers sub-templates))
        (define tail-rewriter (recur tail-template))
-       (list-fuser
-        (for/list ([t (in-list sub-templates)]) (recur t))
-        (for/list ([t (in-list sub-templates)]) (rewriter-fuser t))
-        tail-rewriter)]
+       (if only-conses
+           (λ (pvec lvec)
+             (unsafe-map count (λ (r) (r pvec lvec)) sub-rewriters (tail-rewriter pvec lvec)))
+           (list-fuser count sub-rewriters fusers tail-rewriter))]
       [(? syntax-datum?) 
        (lambda (ignored ignore2) template)]
       [(? cons-or-null?) 
