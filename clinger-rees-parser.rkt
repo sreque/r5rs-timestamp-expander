@@ -69,7 +69,7 @@
         ([(binding-forms) (unsafe-car syntax)]
            [(ref-map extended-env)
             (for/fold
-                ([_ref-map (hash)]
+                ([_ref-map (hasheq)]
                  [_extended-env def-env])
                 ((binding-form (in-list binding-forms)))
               (define id (unsafe-car binding-form))
@@ -290,7 +290,7 @@
         [(macro ((symbol def) ...) body ...)
          ((letrec
              ((symbol def) ...) body ...))]) 
-     (hash)))
+     (hasheq)))
   
   ;implement syntactic rewrite of internal begin statements as a macro for hygiene
   ;for now, we are going to treat internal begin's as a special form and not use this macro at all.
@@ -298,12 +298,12 @@
     (parse-syntax-transformer 
      '(syntax-rules ()
         [(macro statements ...) ((lambda () statements ...))])
-     (hash)))
+     (hasheq)))
   
   (define wrap-with-begin-macro
     (parse-syntax-transformer
      '(syntax-rules ()
-        [(macro statements ...) (begin statements ...)]) (hash))) 
+        [(macro statements ...) (begin statements ...)]) (hasheq))) 
   
   ;instead of calling rewrite-inner-begin-macro directly, use this function instead
   ;it is expected that the defines-list is in reverse order of the original declaration
@@ -420,15 +420,15 @@
   ;expand a top level form and return (new-top-env expand-exp)
   (define (expand-top-level-form top-env sexp)
     (define (expand-default)
-      (expand-inner-syntax sexp top-env (hash) #:at-top-level #t))
+      (expand-inner-syntax sexp top-env (hasheq) #:at-top-level #t))
     (match sexp
       [(cons (? symbol? symbol) contents)
-       (define-values (denotation denotes-keyword?) (get-denotation-and-keyword-predicate symbol top-env (hash)))
+       (define-values (denotation denotes-keyword?) (get-denotation-and-keyword-predicate symbol top-env (hasheq)))
        (cond
          [(denotes-keyword? 'define)
           (define-values (id body) (parse-define contents))
           (define new-top-env (hash-set top-env id id))
-          (values new-top-env `(define ,id ,(expand-inner-syntax body new-top-env (hash))))]
+          (values new-top-env `(define ,id ,(expand-inner-syntax body new-top-env (hasheq))))]
          [(denotes-keyword? 'define-syntax)
           (define rest contents)
           (match contents
@@ -441,7 +441,7 @@
                  ([ref (box (void))]
                   [macro-wrapper (λ (s le) ((unsafe-unbox ref) s le))]
                   [new-top-env (hash-set top-env keyword macro-wrapper)]
-                  [macro (parse-syntax-transformer transformer-spec (hash keyword (cons macro-wrapper keyword)))])
+                  [macro (parse-syntax-transformer transformer-spec (hasheq keyword (cons macro-wrapper keyword)))])
                (unsafe-set-box! ref macro)
                (values (hash-set top-env keyword macro) (void)))]
             [else

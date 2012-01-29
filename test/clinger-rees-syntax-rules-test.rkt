@@ -35,11 +35,7 @@
          (values v k)))
      
      (define (hash-length the-hash)
-       (define size 0)
-       (hash-for-each 
-        the-hash
-        (λ (k v) (set! size (add1 size))))
-       size)
+       (hash-count the-hash))
      
      ;assumes all identifiers in env were renamed from symbols, and that all symbols were bound locally at the time of definition, and that the syntax definition is not recursive (let-syntax).
      ;verifies that exactly the bindings that are expected are present and are based off their parent bindings.
@@ -65,25 +61,25 @@
             [p2 (datum "a")]
             [p3 (datum #\a)]
             [p4 (fixed-list '() (list (datum syntax)))]
-            [register (hash 'a 0)]
+            [register (hasheq 'a 0)]
             [pvec (make-vector 1 (void))])
-       (define result ((make-matcher p1 (hash) register 1) syntax (hash) pvec))
+       (define result ((make-matcher p1 (hasheq) register 1) syntax (hasheq) pvec))
        (check-match-success result)
        (check-pred void? (vector-ref pvec 0) (format "vector should be empty: ~a\n" pvec))
        (for ([p (list p2 p3 p4)])
-         (check-match-failure ((make-matcher p (hash) register 1) syntax (hash) pvec))))
+         (check-match-failure ((make-matcher p (hasheq) register 1) syntax (hasheq) pvec))))
      
      ;test pattern identifier's resulting matcher matching different kinds of syntax.
      (let* ([pattern (pattern-identifier 'v 0)]
-            [register (hash 'v 0)]
-            [matcher (make-matcher pattern (hash) register 1)]
+            [register (hasheq 'v 0)]
+            [matcher (make-matcher pattern (hasheq) register 1)]
             [s1 'v]
             [s2 '(a b c d)]
             [s3 #(bob dole is cool)]
             [s4 #hash( (1 . 2) (3 . 4) (5 . 6))]
             [pvec (make-vector 1 (void))])
        (for ([s (list s1 s2 s3 s4)])
-         (define result (matcher s (hash) pvec))
+         (define result (matcher s (hasheq) pvec))
          (check-match-success result)
          (check-equal? s (vector-ref pvec 0))))
      
@@ -91,22 +87,22 @@
      (let* ([id 'x]
             [pattern (literal-identifier id)]
             [bad-syntaxes (list 'a "b" #\x `(,id) #(x))]
-            [empty-env (hash)]
-            [env1 (hash id (cons (gensym id) id))]
-            [env2 (hash id (cons (gensym id) id))]
+            [empty-env (hasheq)]
+            [env1 (hasheq id (cons (gensym id) id))]
+            [env2 (hasheq id (cons (gensym id) id))]
             [id2 'y]
-            [diff-env (hash id2 (hash-ref env1 id))])
+            [diff-env (hasheq id2 (hash-ref env1 id))])
        (for ([env (list empty-env env1 env2)])
-         (define result ((make-matcher pattern env (hash) 0) id env (vector)))
+         (define result ((make-matcher pattern env (hasheq) 0) id env (vector)))
          (check-match-success result))
        (for ([s bad-syntaxes])
-         (check-match-failure ((make-matcher pattern empty-env (hash) 0) s empty-env (vector))))
+         (check-match-failure ((make-matcher pattern empty-env (hasheq) 0) s empty-env (vector))))
        (for ([e1 (list empty-env env1 env2)]
              [e2 (list env1 env2 empty-env)])
-         (check-match-failure ((make-matcher pattern e1 (hash) 0) id e2 (vector))))
-       (check-match-success ((make-matcher pattern env1 (hash) 0) id2 diff-env (vector)))
-       (check-match-failure ((make-matcher pattern env1 (hash) 0) id diff-env (vector)))
-       (check-match-failure ((make-matcher pattern env2 (hash) 0) id2 diff-env (vector))))
+         (check-match-failure ((make-matcher pattern e1 (hasheq) 0) id e2 (vector))))
+       (check-match-success ((make-matcher pattern env1 (hasheq) 0) id2 diff-env (vector)))
+       (check-match-failure ((make-matcher pattern env1 (hasheq) 0) id diff-env (vector)))
+       (check-match-failure ((make-matcher pattern env2 (hasheq) 0) id2 diff-env (vector))))
      
      ;test matching of fixed list against syntax lists of the same and different sizes and with different contents
      (let* ([syntax '(a b c d e f g)]
@@ -114,11 +110,11 @@
             [small-syntax (take syntax (sub1 (length syntax)))]
             [wrong-syntax (map (lambda (s) (if (eqv? s 'd) 'z s)) syntax)]
             [pattern (fixed-list syntax (map (lambda (s) (datum s)) syntax))]
-            [matcher (make-matcher pattern (hash) (hash) 0)])
-       (define good-result (matcher syntax (hash) (vector)))
+            [matcher (make-matcher pattern (hasheq) (hasheq) 0)])
+       (define good-result (matcher syntax (hasheq) (vector)))
        (check-match-success good-result)
-       (check-match-failure (matcher big-syntax (hash) (vector)))
-       (check-match-failure (matcher wrong-syntax (hash) (vector))))
+       (check-match-failure (matcher big-syntax (hasheq) (vector)))
+       (check-match-failure (matcher wrong-syntax (hasheq) (vector))))
      
      ;check matching against nested fixed lists
      (let* ([syntax '((invoke return value) literal (a b))]
@@ -130,10 +126,10 @@
                                        (literal-identifier 'literal)
                                        (fixed-list '() (list (pattern-identifier id2 1)
                                                              (pattern-identifier id3 2)))))]
-            [register (hash id1 0 id2 1 id3 2)]
+            [register (hasheq id1 0 id2 1 id3 2)]
             [reg-size 3]
             [pvec (make-vector reg-size (void))])
-       (define result ((make-matcher pattern (hash) register reg-size) syntax (hash) pvec))
+       (define result ((make-matcher pattern (hasheq) register reg-size) syntax (hasheq) pvec))
        (check-equal? pvec (vector '(invoke return value) 'a 'b)))
      
      ;This test is flawed and needs to be changed or removed. 
@@ -155,17 +151,17 @@
                                (datum 'i)))
                         (datum 'j)
                         (datum 'k))))]
-            [register (hash id1 0 id2 1)]
+            [register (hasheq id1 0 id2 1)]
             [pvec (make-vector 2 (void))]
-            [matcher (make-matcher pattern (hash) register 2)]
+            [matcher (make-matcher pattern (hasheq) register 2)]
             [too-short '(a b)]
             [too-long (cons 'z syntax)])
-       (define result (matcher syntax (hash) pvec))
+       (define result (matcher syntax (hasheq) pvec))
        (check-match-success result)
        (check-equal? pvec (vector 'c '(f g h)))
-       (check-match-failure (matcher too-short (hash) pvec))
-       (check-match-failure (matcher too-long (hash) pvec))
-       (check-match-failure (matcher 'weird-syntax (hash) pvec)))
+       (check-match-failure (matcher too-short (hasheq) pvec))
+       (check-match-failure (matcher too-long (hasheq) pvec))
+       (check-match-failure (matcher 'weird-syntax (hasheq) pvec)))
      
      ;test matching of ellipses list against lists of varying length
      (let* ([syntax '(a b c d e f g)]
@@ -174,14 +170,14 @@
             [pattern (ellipses-list '() 
                                     (list (datum 'a) (datum 'b) (pattern-identifier id2 1)) 
                                     (pattern-identifier id 0))]
-            [register (hash id 0 id2 1)]
+            [register (hasheq id 0 id2 1)]
             [pvec (make-vector 2 (void))]
             [too-small '(a b c)]
             [really-small '(a)]
             [just-right '(a b c d)]
-            [_matcher (make-matcher pattern (hash) register 2)]
+            [_matcher (make-matcher pattern (hasheq) register 2)]
             [matcher (λ (s) 
-                       (define match-result (_matcher s (hash) pvec))
+                       (define match-result (_matcher s (hasheq) pvec))
                        (if (pattern-mismatch? match-result) match-result pvec))])
        (check-equal? (matcher syntax) (vector '(d e f g) 'c))
        (check-equal? (matcher just-right) (vector '(d) 'c))
@@ -193,7 +189,7 @@
      (let* ([syntax '((a b c) (c d e) (f g h) (i j k) (l m) (n))]
             [pattern (ellipses-list '() (list) (ellipses-list '() (list) (pattern-identifier 'x 0)))]
             [pvec (vector (void))])
-       (define match-result ((make-matcher pattern (hash) (hash 'x 0) 1) syntax (hash) pvec))
+       (define match-result ((make-matcher pattern (hasheq) (hasheq 'x 0) 1) syntax (hasheq) pvec))
        (check-match-success match-result)
        (check-equal? pvec  (vector syntax)))
      
@@ -267,7 +263,7 @@
      (let*-values
          ([(template _ __)
            (parse-transformer-template
-            '((a ...)) (vector 1) (hash 'a 0))])
+            '((a ...)) (vector 1) (hasheq 'a 0))])
        (check-equal?
         template
         (template-list 
@@ -281,7 +277,7 @@
              (template-pattern-identifier 'a 1 0)
              1
              0
-             (hash '0 (set 1))
+             (hasheq '0 (set 1))
              (set 0))))))))
      
      ;test improper-template-list parsing
@@ -291,7 +287,7 @@
      #;(let* ([template 
                (parse-transformer-template
                 '(a ... ... #f "c" #\5 6 . ((very nested) . lists))
-                (hash 'a 2) (hash 'a 0))])
+                (hasheq 'a 2) (hasheq 'a 0))])
          (check-equal?
           template
           (improper-template-list 
@@ -355,8 +351,8 @@
              '(5 ...)]
             [really-nested-identifier-syntax
              '((1 2 3 . (4 5 . a)) ...)])
-       (check-exn syntax-error? (lambda () (parse-transformer-template bad-syntax (vector 1) (hash 'a 0))))
-       (parse-transformer-template really-nested-identifier-syntax (vector 1) (hash 'a 0))
+       (check-exn syntax-error? (lambda () (parse-transformer-template bad-syntax (vector 1) (hasheq 'a 0))))
+       (parse-transformer-template really-nested-identifier-syntax (vector 1) (hasheq 'a 0))
        #t)
      
      
@@ -455,7 +451,7 @@
      ;That macro is then invoked and its resulting syntax is checked.
      (let* 
          ([pattern-nestings (vector 1 1 1 2)]
-          [pattern-indeces (hash 'a 0 'b 1 'c 2 'd 3)]
+          [pattern-indeces (hasheq 'a 0 'b 1 'c 2 'd 3)]
           [template
            (let ()
            (define-values (result reg-reg reg-reg-size) 
@@ -485,9 +481,9 @@
      ;This would actually cause the and macro to not work as expected if used with let-syntax, but that is beyond this test.
      (let*-values 
          ([(rules) (parse-syntax-rules 
-                    and-syntax (hash))]    
+                    and-syntax (hasheq))]    
           [(macro) (make-macro-transformer rules)]
-          [(env) (hash 'and (cons 'and 'and) 'if (cons 'if 'if))]
+          [(env) (hasheq 'and (cons 'and 'and) 'if (cons 'if 'if))]
           [(r1 e1) (macro '(and) env)]
           [(r2 e2) (macro '(and "bob") env)]
           [(r3 e3) (macro '(and #f #t) env)]
@@ -505,8 +501,8 @@
      
      ;with no local bindings for and and if, a macro should generate identifiers whose binding denotes the same top-level value as their original identifiers.
      #;(let*-values
-         ([(macro) (parse-syntax-transformer and-syntax (hash))]
-          [(s e) (macro '(and a b 1) (hash))]
+         ([(macro) (parse-syntax-transformer and-syntax (hasheq))]
+          [(s e) (macro '(and a b 1) (hasheq))]
           [(req) (invert-hash qe)]
           [(new-and new-if) (values (hash-ref req 'and) (hash-ref req 'if))])
        (check-equal? (length (hash-keys req)) 2)
@@ -517,10 +513,10 @@
      (let*-values
          ([(rules) (parse-syntax-rules
                     '(syntax-rules ()
-                       [(who-cares a) (list a 'a)]) (hash))]
+                       [(who-cares a) (list a 'a)]) (hasheq))]
           [(macro) (make-macro-transformer rules)]
-          [(env) (hash)]
-          [(r1 e1) (macro '(imagine-this-keyword-is-bound-to-the-macro (list 1 2 3)) (hash))])
+          [(env) (hasheq)]
+          [(r1 e1) (macro '(imagine-this-keyword-is-bound-to-the-macro (list 1 2 3)) (hasheq))])
        (check-not-exn
         (lambda ()
           (match r1

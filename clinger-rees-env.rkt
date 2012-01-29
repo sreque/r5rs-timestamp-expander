@@ -29,7 +29,7 @@
       (values s s)))
   
   (define (parse-internal-macro syntax)
-    (parse-syntax-transformer syntax (hash)))
+    (parse-syntax-transformer syntax (hasheq)))
   
   (define-syntax (define-macro stx)
     (define subs (syntax->list stx))

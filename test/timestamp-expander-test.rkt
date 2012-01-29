@@ -38,7 +38,7 @@
   (check-equal? (rewrite-let*-as-lambda syntax) 
                  `((,(ts-syntax 'lambda 0) (x) ((,(ts-syntax 'lambda 0) (y) (begin (+ x y))) (+ x 1))) 1)))
 
-(check-equal? (alpha-rename (parser-state 'a (hash))) 'a)
+(check-equal? (alpha-rename (parser-state 'a (hasheq))) 'a)
 (check-equal? (macro-expand 'a) 'a)
 (macro-expand '(or 1 2 3))
 (macro-expand '(let ([v #t]) (or #f v)))

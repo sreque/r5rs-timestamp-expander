@@ -112,7 +112,7 @@
   
   (define (make-id-registrar #:allow-duplicates (allow-duplicates #f))
     (define-values (num-getter num-incr) (make-incrementer))
-    (define register (hash))
+    (define register (hasheq))
     (values 
      (λ () register)
      num-getter
@@ -424,7 +424,7 @@
   (define (template-pattern-depths template)
     (define result
       (let loop ([t template]
-                 [ids (hash)])
+                 [ids (hasheq)])
         (match t
           [(template-pattern-identifier id depth idx)
            (hash-set ids idx (set-add (hash-ref ids idx (set)) depth))]

@@ -35,7 +35,7 @@
       (set! time (add1 time))
       result)
     (define init-stx (stamp-and-increment syntax))
-    (define init-pstate (parser-state init-stx (hash 'or or-macro 'and and-macro)))
+    (define init-pstate (parser-state init-stx (hasheq 'or or-macro 'and and-macro)))
     (define (reduce-binding-construct pstate)
       (match pstate
         [(parser-state (list (ts-syntax 'lambda _) rest ...) _)
@@ -73,7 +73,7 @@
               stuff)]
         [(parser-state other env) other]))
     (define expanded (expand-main init-pstate))
-    (alpha-rename (parser-state expanded (hash))))
+    (alpha-rename (parser-state expanded (hasheq))))
   
   (define (alpha-rename pstate)
     #;(printf "~a -- ~a\n" (parser-state-syntax pstate) (parser-state-env pstate))
