@@ -10,6 +10,8 @@
   ;The performant one would be used when doing normal matching. 
   ;When a a macro entirely fails to match on an invocation, 
   ; the other version would be invoked to provide a detailed error message to the user.
+  
+  (define (id-lambda v) v)
   (define-syntax format
     (syntax-rules ()
       [(_ arg1 arg-rest ...) arg1]))
@@ -924,19 +926,36 @@
   ;hash-table no. 2 represents a mapping from re-written symbols to their original value
   (define (make-macro-transformer syntax-rules)
     ;assume at this point that syntax-rules is a non-empty list of syntax-rule structs.
-    (define (rewrite rule syntax use-env pattern-env)
+    (define max-vector-length 
+      (let loop ([rem-rules syntax-rules] [cur-max 0])
+        (if (null? rem-rules)
+            cur-max
+            (let ([ cur-size (unsafe-vector*-length (unsafe-struct*-ref (unsafe-car rem-rules) 4))])
+              (loop (unsafe-cdr rem-rules)
+                    (if (> cur-size cur-max) cur-size cur-max))))))
+    (define pattern-env (make-vector max-vector-length 0))
+    (define pvec
+      (let ([vec-lengths (make-vector max-vector-length)])
+        (for ([rule (in-list syntax-rules)])
+          (define pattern-nestings (unsafe-struct*-ref rule 4))
+          (define imax (unsafe-vector*-length pattern-nestings))
+          (cfor (i 0 (unsafe-fx< i imax) (unsafe-add1 i))
+                (define cur-max (unsafe-vector*-ref vec-lengths i))
+                (define new-value (unsafe-vector*-ref pattern-nestings i))
+                (when (> new-value cur-max)
+                  (unsafe-vector*-set! vec-lengths i new-value))))
+        (cfor (i 0 (unsafe-fx< i max-vector-length) (unsafe-add1 i))
+              (unsafe-vector*-set! vec-lengths i (make-vector (unsafe-add1 (unsafe-vector*-ref vec-lengths i)))))
+        vec-lengths))
+    (define (rewrite rule syntax use-env)
       (match-define (syntax-rule matcher rewriter reg-idx->id def-bindings pattern-nestings) rule)
       (define num-pids (unsafe-vector*-length pattern-nestings))
-      (define pvec (make-vector num-pids))
       (cfor (i 0 (unsafe-fx< i num-pids) (unsafe-add1 i))
-            (define vec (make-vector (unsafe-add1 (unsafe-vector*-ref pattern-nestings i))))
-            (unsafe-vector*-set! pvec i vec)
-            (unsafe-vector*-set! vec (unsafe-vector*-ref pattern-nestings i) (unsafe-vector*-ref pattern-env i)))
+            (unsafe-vector*-set! (unsafe-vector*-ref pvec i) (unsafe-vector*-ref pattern-nestings i) (unsafe-vector*-ref pattern-env i)))
       (define num-lits (unsafe-vector*-length reg-idx->id))
       (define new-ids (make-vector num-lits))
       (cfor (i 0 (unsafe-fx< i num-lits) (unsafe-add1 i))
-            (unsafe-vector*-set! new-ids i (gensym (unsafe-vector*-ref reg-idx->id i))))
-     
+            (unsafe-vector*-set! new-ids i (gensym (unsafe-vector*-ref reg-idx->id i))))     
       (define new-use-env
         (let loop ([extended use-env] [i 0])
           (if (unsafe-fx= i num-lits)
@@ -954,12 +973,10 @@
             (match rem-rules
               [(cons rule rest)
                (let ()
-                 (define pattern-nestings (unsafe-struct*-ref rule 4))
-                 (define pvec (make-vector (unsafe-vector*-length pattern-nestings)))
-                 (define match ((syntax-rule-matcher rule) rest-syntax use-env pvec))
+                 (define match ((syntax-rule-matcher rule) rest-syntax use-env pattern-env))
                  (if (pattern-mismatch? match)
-                      (loop (cons match match-failures) rest)
-                      (rewrite rule syntax use-env pvec)))]
+                      (loop match-failures #;(cons match match-failures) rest)
+                      (rewrite rule syntax use-env)))]
               [else
                (error (format "match failed\nsyntax: ~a\nmatch errors: ~a" syntax (reverse match-failures)))])))))
   

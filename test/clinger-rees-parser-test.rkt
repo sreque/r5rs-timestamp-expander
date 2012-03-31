@@ -135,7 +135,7 @@
      (match syntax
        [(list (? (sym-matcher 'quote)) (list (? (sym-matcher 'a)) (? (sym-matcher 'b)) (? (sym-matcher 'c)) 1 2 3 "you" "and" "me" (? (sym-matcher 'we-make-three)))) #t])))
   (check-equal? (unquote-syntax syntax local-env) quote-expr)
-  (check-equal? (expand-inner-syntax syntax r5rs-top-level-env local-env) quote-expr))
+  (check-equal? (expand-inner-syntax syntax r5rs-top-level-env local-env #f) quote-expr))
 
 ;test symbol expansion, both user symbols and macro-generated symbols
 (let*-values
@@ -151,48 +151,48 @@
                             [(id)  (,sym 1 2 3)])]
      [(macro-undefined) (parse-syntax-transformer uses-sym-syntax empty-env)]
      [(macro-defined) (parse-syntax-transformer uses-sym-syntax sym-defined-env)])
-  (check-equal? (expand-inner-syntax sym empty-env sym-defined-env) sym)
-  (check-equal? (expand-inner-syntax sym top-defined-env empty-env) sym)
+  (check-equal? (expand-inner-syntax sym empty-env sym-defined-env #f) sym)
+  (check-equal? (expand-inner-syntax sym top-defined-env empty-env #f) sym)
   ;not checking for unbound variables anymore
   #;(check-exn syntax-error?
              (λ () (expand-inner-syntax sym empty-env empty-env)))
   
   (check-exn syntax-error?
-             (λ () (expand-inner-syntax sym empty-env (hash-set sym-defined-env sym (cons macro sym)))))
+             (λ () (expand-inner-syntax sym empty-env (hash-set sym-defined-env sym (cons macro sym)) #f)))
   (check-equal?
-   (expand-inner-syntax '(id) empty-env (hash-set sym-defined-env 'id (cons macro-defined 'id))) `(,sym 1 2 3))
+   (expand-inner-syntax '(id) empty-env (hash-set sym-defined-env 'id (cons macro-defined 'id)) #f) `(,sym 1 2 3))
   #;(check-exn syntax-error?
-             (λ () (expand-inner-syntax '(id) empty-env (hash-set sym-defined-env 'id macro-undefined)))))
+             (λ () (expand-inner-syntax '(id) empty-env (hash-set sym-defined-env 'id macro-undefined) #f))))
      
 ;test expanding data
 (let*
-    ([expand (λ (v) (expand-inner-syntax v r5rs-top-level-env (hasheq)))]
+    ([expand (λ (v) (expand-inner-syntax v r5rs-top-level-env (hasheq) #f))]
      [test (λ (v) (check-equal? (expand v) v))])
   (test #\d)
   (test "string")
   (test 5.5))
 
 ;test expanding literals supported by the Racket reader but not by r5rs
-(check-exn syntax-error? (λ () (expand-inner-syntax #&17 r5rs-top-level-env (hasheq))))
+(check-exn syntax-error? (λ () (expand-inner-syntax #&17 r5rs-top-level-env (hasheq) #f)))
 
 ;vectors not yet supported
-(check-exn syntax-error? (λ () (expand-inner-syntax #(1 2 3) (hasheq) (hasheq))))
+(check-exn syntax-error? (λ () (expand-inner-syntax #(1 2 3) (hasheq) (hasheq) #f)))
 
 ;an empty list is illegal syntax
-(check-exn syntax-error? (λ () (expand-inner-syntax '() (hasheq) (hasheq))))
+(check-exn syntax-error? (λ () (expand-inner-syntax '() (hasheq) (hasheq) #f)))
 ;TODO: test handle-list
 
 ;check procedure application of a symbol
 (let*
     ([syntax '(+ 1 2 3)]
-     [expanded (expand-inner-syntax syntax r5rs-top-level-env (hasheq))])
+     [expanded (expand-inner-syntax syntax r5rs-top-level-env (hasheq) #f)])
   (check-not-exn
    (λ () (match expanded [(list (? (sym-matcher '+)) 1 2 3) #t]))))
 
 ;check procedure application where the operator is a a list
 (let*
     ([syntax '((plus) 4 5 6)]
-     [expanded (expand-inner-syntax syntax (hasheq) (hasheq 'plus (cons 'plus 'plus)))])
+     [expanded (expand-inner-syntax syntax (hasheq) (hasheq 'plus (cons 'plus 'plus)) #f)])
   (check-equal? expanded syntax))
 
 ;check handling of begin
@@ -212,7 +212,7 @@
      [macro (parse-syntax-transformer macro-syntax (hasheq))]
      [syntax '(append (macro 1 2 3) (macro 4 5 6))]
      #;(hasheq 'append (cons 'append 'append) 'macro (cons macro 'macro) 'list (cons 'list 'list))
-     [expanded (expand-inner-syntax syntax (hasheq 'append 'append 'macro macro 'list 'list) (hasheq))])
+     [expanded (expand-inner-syntax syntax (hasheq 'append 'append 'macro macro 'list 'list) (hasheq) #f)])
   (check-not-exn
    (λ () 
      (match expanded
@@ -220,22 +220,22 @@
      
 ;test illegal define
 (check-exn syntax-error?
-           (λ () (expand-inner-syntax '(define a 5) (hasheq) (hasheq))))
+           (λ () (expand-inner-syntax '(define a 5) (hasheq) (hasheq) #f)))
 
 ;test illegal define-syntax`
 (check-exn syntax-error?
-           (λ () (expand-inner-syntax '(define-syntax bob (syntax-rules () [(bob dole) '()])) (hasheq) (hasheq))))
+           (λ () (expand-inner-syntax '(define-syntax bob (syntax-rules () [(bob dole) '()])) (hasheq) (hasheq) #f)))
 
 ;shouldn't be able to apply values that can't resolve to functions
 (check-exn
  syntax-error?
  (λ ()
-   (expand-inner-syntax '("I'm a function! Really!" 'no 'you 'are 'not) (hasheq) (hasheq))))
+   (expand-inner-syntax '("I'm a function! Really!" 'no 'you 'are 'not) (hasheq) (hasheq) #f)))
 
 ;test simple lambda expression expansion
 (let ([syntax 
        (expand-inner-syntax 
-        '(lambda (a b c) (+ a b c)) (hasheq '+ '+) (hasheq))])
+        '(lambda (a b c) (+ a b c)) (hasheq '+ '+) (hasheq) #f)])
   (check-not-exn
    (λ ()
      (match syntax
@@ -251,7 +251,7 @@
                        ((m (syntax-rules ()
                              [(m) x])))
                      ((lambda (x) (m)) "inner"))) "outer")]
-       [expanded-syntax (expand-inner-syntax syntax (hasheq) (hasheq))])
+       [expanded-syntax (expand-inner-syntax syntax (hasheq) (hasheq) #f)])
     (match-define
       #;(list (list 'lambda (list x1) (list 'begin (list (list 'lambda (list x2) x1) "inner"))) "outer")
       (list (list 'lambda (list x1) (list (list 'lambda (list x2) x1) "inner")) "outer")
@@ -298,7 +298,7 @@
          (define two 2)
          (plus (minus here vars more) (minus v1 v2 v3) hundred two))]
      [expanded1 
-      (expand-inner-syntax syntax r5rs-top-level-env (hasheq))]
+      (expand-inner-syntax syntax r5rs-top-level-env (hasheq) #t)]
      [expanded2
       (cons 'begin (expand-inner-body-syntax (list syntax) r5rs-top-level-env (hasheq)))])
   (check-equal? 98 (eval expanded1 (make-base-namespace)))
@@ -316,7 +316,7 @@
   ;TODO: come up with a way to check the content of the exception
   (check-exn 
    syntax-error?
-   (λ () (expand-inner-syntax syntax r5rs-top-level-env (hasheq)))))
+   (λ () (expand-inner-syntax syntax r5rs-top-level-env (hasheq) #t))))
 
 ;simple test of expand-top-level with defines
 ;I'm punting on having the macro expander detect undefined variables for now

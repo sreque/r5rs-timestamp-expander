@@ -1,6 +1,7 @@
-(module clinger-rees-parser racket
+(module clinger-rees-parser racket/base
   (provide (except-out (all-defined-out) format))
   #;(provide (all-defined-out))
+  (require (rename-in racket (format debug-format)))
   (require 
    racket/unsafe/ops
    "clinger-rees-syntax-rules.rkt")
@@ -39,7 +40,7 @@
       [else
        (raise-syntax-error# 
          syntax
-         (format "expected at least 2 arguments to ~a, got ~a" form-name (length syntax)))]))
+         (debug-format "expected at least 2 arguments to ~a, got ~a" form-name (length syntax)))]))
     
   (define (reduce-let-syntax syntax def-env)
     (verify-syntax-binding-shape syntax "let-syntax")
@@ -171,7 +172,7 @@
   ;returns void if the identifier is unbound
   
   (define get-local-denotation-default (cons (void) (void)))
-  (define (get-denotation symbol top-env local-env #:default (default (void)))
+  (define (get-denotation symbol top-env local-env default)
     (define local-denotation (unsafe-car (hash-ref local-env symbol get-local-denotation-default)))
     (match local-denotation
       [(? void?) ;unbound locally
@@ -189,23 +190,24 @@
       [(? symbol?) (let ([den (hash-ref use-env syntax (void))]) (if (void? den) syntax (unsafe-cdr den)))]
       [else             syntax]))
   
-  ;This function should be private, if I took the time to learn how to do that with Racket modules.
-  ;it returns a tuple of the denotation of a symbol and a predicate that can be used to test if the denotation is a particular keyword
-  ;the denotation will either be void, a symbol, or a procedure
-  ;the predicate will return true if the denotation is a symbol that matches the passed-in keyword, and false otherwise 
-  (define (get-denotation-and-keyword-predicate symbol top-env local-env)  
-    (define-values  (denotation denotation-symbol) (get-denotation symbol top-env local-env))
-    #;(printf "denotation symbol for ~a is ~a. Denotation is ~a\n" symbol denotation-symbol denotation)
-    (define bound? (not (void? denotation)))
-    (define denotes-keyword? (if bound?
-                                 (lambda (keyword) #f)
-                                 (lambda (keyword) (eqv? denotation-symbol keyword))))
-    (values denotation denotes-keyword?))
-  
   ;This is the hack I use to get working the feature where macros can expand to internal defines
   ;this is basically a piece of syntax together with an environment and a reverse symbol map for quoting
   (define-struct partially-expanded (syntax local-env) #:transparent)
   
+  (define (handle-macro-use macro use-syntax top-env local-env)
+      (define-values (new-syntax new-local-env) (macro use-syntax local-env))
+      (match new-syntax
+        [(cons (? symbol? symbol) _)
+         (define-values (denotation den-sym) (get-denotation symbol top-env new-local-env (void)))
+         (cond
+           [(procedure? denotation)
+            #;(printf "invoking macro ~a on ~a\n" (unsafe-car new-syntax) new-syntax)
+            (handle-macro-use denotation new-syntax top-env new-local-env)]
+           [else
+            (partially-expanded new-syntax new-local-env)])]
+        [else
+         #;(printf "after using macro ~a to expand ~a to ~a, recursively epxanding with new-local-env=~a\n" denotation use-syntax new-syntax new-local-env)
+          (partially-expanded new-syntax new-local-env)]))
   ;expand a list of body syntax expressions.
   ;this function returns a list of expressions, just as it takes as input a list of expressions
   ;this function handles defines using letrec.
@@ -213,20 +215,6 @@
   (define (expand-inner-body-syntax syntax-list top-env local-env)
     ;There's a good chance this code, meant to allow the non-r5rs feature of having macros expand into internal defines, could be broken by design.
     ;it has to expand and rewrite everything all the way because we throw away the syntactic environment at the end of this function call
-    (define (handle-macro-use macro use-syntax local-env)
-      (define-values (new-syntax new-local-env) (macro use-syntax local-env))
-      (match new-syntax
-        [(cons (? symbol? symbol) _)
-         (define-values (denotation denotes-keyword?) (get-denotation-and-keyword-predicate symbol top-env new-local-env))
-         (cond
-           [(procedure? denotation)
-            #;(printf "invoking macro ~a on ~a\n" (unsafe-car new-syntax) new-syntax)
-            (handle-macro-use denotation new-syntax new-local-env)]
-           [else
-            (partially-expanded new-syntax new-local-env)])]
-        [else
-         #;(printf "after using macro ~a to expand ~a to ~a, recursively epxanding with new-local-env=~a\n" denotation use-syntax new-syntax new-local-env)
-          (partially-expanded new-syntax new-local-env)]))
     (define-syntax app-pred
       (syntax-rules ()
         [(_ _v)
@@ -236,8 +224,6 @@
         [(_ _v)
          (let ([v _v])
            (or (app-pred v) (and (partially-expanded? v) (app-pred (partially-expanded-syntax v)))))]))
-    #;(define-syntax app-pred (syntax-rules () [(_ v) (match v [(cons (? symbol?) _) #t] [else #f])]))
-    #;(define super-app-pred (λ (v) (or (app-pred v) (and (partially-expanded? v) (app-pred (partially-expanded-syntax v))))))
     (define (loop defines-list rem-list)
       (define-syntax no-more-defines
         (syntax-rules ()
@@ -246,39 +232,38 @@
              (define-values (new-syntax new-local-env)
                (rewrite-inner-body-syntax defines-list rem-list local-env))
              #;(printf "new syntax: ~a\n" new-syntax)
-             (for/list ([v (in-list new-syntax)]) (expand-inner-syntax v top-env new-local-env)))]))
-      (match rem-list 
-        ['()
+             (for/list ([v (in-list new-syntax)]) (expand-inner-syntax v top-env new-local-env #f)))]))
+      (match rem-list
+        [(cons (? super-app-pred app-expr-pre) cdr-rem-list)
+         (define pre-expanded? (partially-expanded? app-expr-pre))
+         (define-values (app-expr le syntax-wrapper)
+           (if pre-expanded?
+               (values 
+                (partially-expanded-syntax app-expr-pre)
+                (partially-expanded-local-env app-expr-pre)
+                (λ (v) (partially-expanded v le)))
+               (values
+                app-expr-pre
+                local-env
+                id-lambda)))
+         (define-values (denotation den-sym) (get-denotation (unsafe-car app-expr) top-env le (void)))
+         (cond 
+          [(void? denotation)
+           (match den-sym
+             ['define
+              (define-values (id value) (parse-define (unsafe-cdr app-expr)))
+              (loop (cons (list id (syntax-wrapper value)) defines-list) cdr-rem-list)]
+             ['begin            
+              (loop defines-list (append (for/list ([v (in-list (unsafe-cdr app-expr))]) (syntax-wrapper v)) cdr-rem-list))]
+             [else (no-more-defines)])]
+          [(procedure? denotation)
+           #;(printf "invoking macro ~a on ~a\n" symbol app-expr)
+           (loop defines-list (cons (handle-macro-use denotation app-expr top-env le) cdr-rem-list))]
+          [else (no-more-defines)])]
+        #;['()
          (raise-syntax-error#
           syntax-list
           (format "body must contain at least one expression that is not a define. defines-list=~a" defines-list))]
-        [(cons (? super-app-pred app-expr-pre) cdr-rem-list)
-         (define pre-expanded? (partially-expanded? app-expr-pre))
-         (define app-expr (if pre-expanded? (partially-expanded-syntax app-expr-pre) app-expr-pre))
-         (define le 
-           (if pre-expanded?
-               (partially-expanded-local-env app-expr-pre)
-               local-env))
-         (define inner-expander
-           (if pre-expanded?
-               (lambda (s te _le) (expand-inner-syntax s te le))
-               expand-inner-syntax))
-         (define syntax-wrapper
-           (if pre-expanded?
-               (λ (v) (partially-expanded v le))
-               (λ (v) v)))
-         (define symbol (unsafe-car app-expr))
-         (define-values (denotation denotes-keyword?) (get-denotation-and-keyword-predicate symbol top-env le))
-         (cond
-           [(denotes-keyword? 'define)
-            (define-values (id value) (parse-define (unsafe-cdr app-expr)))
-            (loop (cons (list id (syntax-wrapper value)) defines-list) cdr-rem-list)]
-           [(denotes-keyword? 'begin)            
-            (loop defines-list (append (map syntax-wrapper (unsafe-cdr app-expr)) cdr-rem-list))]
-           [(procedure? denotation)
-            #;(printf "invoking macro ~a on ~a\n" symbol app-expr)
-            (loop defines-list (cons (handle-macro-use denotation app-expr le) cdr-rem-list))]
-           [else (no-more-defines)])]
         [else (no-more-defines)]))
     #;(printf "Expanding body syntax: ~a\n" syntax-list)
     (loop '() syntax-list))
@@ -315,77 +300,86 @@
   ;expand a piece of syntax that is not at the top level and not at the beginning of a body
   ;this means that define and define-syntax is illegal
   ;returns the expanded syntax. Since no identifiers can be bound, there is no need to return a new local-env
-  (define (expand-inner-syntax syntax top-env local-env #:at-top-level (at-top-level #f))
+  (define (expand-inner-syntax syntax top-env local-env at-top-level)
     (define-syntax recur
       (syntax-rules ()
-        [(_ s le) (expand-inner-syntax s top-env le #:at-top-level at-top-level)]))
+        [(_ s le) (expand-inner-syntax s top-env le at-top-level)]))
     (define-syntax handle-procedure-application
       (syntax-rules ()
         [(_)
         (for/list ([child-syntax (in-list syntax)]) (recur child-syntax local-env))]))
-    ;this will reduce the syntax to its body and expanded environment and then expand the environment
-    ;The return value is a single piece of syntax, either a begin or letrec expression
-    (define (handle-local-syntax-extension reducer)
-      (define-values (body-syntax extended-env) (reducer (unsafe-cdr syntax) local-env))
-      (define expanded-forms (expand-inner-body-syntax  body-syntax top-env extended-env))
-      (if (not (null? (unsafe-cdr expanded-forms)))
-          (cons 'begin expanded-forms)
-          (unsafe-car expanded-forms)))
-    (define (handle-symbol-application)
-      (define symbol (unsafe-car syntax))
-      (define-values (denotation denotes-keyword?) (get-denotation-and-keyword-predicate symbol top-env local-env))
-      #;(printf "applied symbol=~a denotation=~a eqv-quote?=~a\n" symbol denotation (denotes-keyword? 'quote))
-      (cond
-        [(or (denotes-keyword? 'define) (denotes-keyword? 'define-syntax))
-         (if at-top-level
-             (if (denotes-keyword? 'define)
+     ;this will reduce the syntax to its body and expanded environment and then expand the environment
+     ;The return value is a single piece of syntax, either a begin or letrec expression
+     (define-syntax handle-local-syntax-extension
+       (syntax-rules ()
+         [(_ reducer)
+          (let ()
+            (define-values (body-syntax extended-env) (reducer (unsafe-cdr syntax) local-env))
+            (define expanded-forms (expand-inner-body-syntax  body-syntax top-env extended-env))
+            (if (not (null? (unsafe-cdr expanded-forms)))
+                (cons 'begin expanded-forms)
+                (unsafe-car expanded-forms)))]))
+
+     (define-syntax handle-symbol-application  (syntax-rules () [(_ symbol denotation den-sym) 
+       #;(printf "applied symbol=~a denotation=~a eqv-quote?=~a\n" symbol denotation (denotes-keyword? 'quote))
+       (match denotation
+         [(? void?)
+          (match den-sym
+            ['lambda
+             (define decl-and-body (unsafe-cdr syntax))
+             (define-values (body-syntax new-local-env) (reduce-lambda decl-and-body local-env))
+             (define decl (unsafe-car decl-and-body))
+             `(lambda
+                  ,(if (null? decl) '() (recur decl new-local-env)) ;we expand inner syntax here simply to do simple identifier rewrites
+                ,@(expand-inner-body-syntax  body-syntax top-env new-local-env))]
+            ['begin
+             (cons 'begin (expand-inner-body-syntax (unsafe-cdr syntax) top-env local-env))]
+            ['quote
+             (match syntax
+               [(list sym arg) (unquote-syntax syntax local-env)]
+               [else
+                (raise-syntax-error#
+                 syntax
+                 (debug-format "Quote form must contain exactly one argument: ~a" syntax))])]
+            ['define
+             (if at-top-level
                  (let*-values ([(id value) (parse-define (unsafe-cdr syntax))])
                    `(define ,id ,(recur value local-env)))
-                 syntax)
-             (raise-syntax-error#
-              syntax
-              (format "~a illegal except at the top level and at the beginning of a body expression" symbol)))]
-        [(denotes-keyword? 'begin)
-         (cons 'begin (expand-inner-body-syntax (unsafe-cdr syntax) top-env local-env))]
-        [(denotes-keyword? 'let-syntax)
-         (handle-local-syntax-extension reduce-let-syntax)]
-        [(denotes-keyword? 'letrec-syntax)
-         (handle-local-syntax-extension reduce-letrec-syntax)]
-        [(denotes-keyword? 'lambda)
-         (define-values (body-syntax new-local-env) (reduce-lambda (unsafe-cdr syntax) local-env))
-         `(lambda
-           ,(if (empty? (cadr syntax)) '() (recur (cadr syntax) new-local-env)) ;we expand inner syntax here simply to do simple identifier rewrites
-          ,@(expand-inner-body-syntax  body-syntax top-env new-local-env))]
-        [(denotes-keyword? 'quote)
-         (match syntax
-           [(list sym arg) (unquote-syntax syntax local-env)]
-           [else
-            (raise-syntax-error#
-              syntax
-              "Quote form must contain exactly one argument")])]
-        [(procedure? denotation) 
+                 (raise-syntax-error#
+                  syntax
+                  (format "~a illegal except at the top level and at the beginning of a body expression" symbol)))]
+            ['let-syntax
+             (handle-local-syntax-extension reduce-let-syntax)]
+            ['letrec-syntax
+             (handle-local-syntax-extension reduce-letrec-syntax)]
+            ['define-syntax
+             (if at-top-level
+                 syntax
+                 (raise-syntax-error#
+                  syntax
+                  (format "~a illegal except at the top level and at the beginning of a body expression" symbol)))]
+            [else (handle-procedure-application)])]
+         [(? procedure?)
          #;(printf "invoking macro ~a on ~a\n" symbol syntax)
          (define-values (expanded-syntax expanded-local-env) 
            (denotation syntax local-env))
          (recur expanded-syntax expanded-local-env)]
-        [else (handle-procedure-application)]))
+        [else (handle-procedure-application)])]))
     #;(printf "Expanding inner syntax: ~a\n  local-env=~a\n" syntax local-env)
     (cond
-      [(null? syntax)
-       (raise-syntax-error#
-          syntax
-          "illegal empty list")]
       [(cons? syntax)
        (define head (unsafe-car syntax))
        (if (symbol? head)
-           (handle-symbol-application)
+           (let ()
+             (define-values (denotation den-sym) (get-denotation head top-env local-env (void)))
+             (handle-symbol-application head denotation den-sym))
            (if (cons? head)
                (handle-procedure-application)
                (raise-syntax-error#
                 syntax
                 "head value cannot possibly be a procedure")))]
       [(symbol? syntax)
-       (define-values (denotation ignored) (get-denotation syntax top-env local-env #:default syntax))
+       (define-values (denotation ignored) (get-denotation syntax top-env local-env syntax))
        #;(printf "unapplied symbol:xs value=~a user-symbol=~a denotation=~a\n" syntax user-sym denotation)
        (cond
          [(symbol? denotation)
@@ -398,37 +392,35 @@
           (raise-syntax-error#
            syntax
            (format "Unrecognized denotation: ~a.\n This suggests a bug in the macro expander." denotation))])]
+      [(partially-expanded? syntax)
+       (recur (unsafe-struct*-ref syntax 0) (unsafe-struct*-ref syntax 1))]
+      [(syntax-datum? syntax) syntax]
+      [(null? syntax)
+       (raise-syntax-error#
+          syntax
+          "illegal empty list")]
       [(vector? syntax)
        (raise-syntax-error#
         syntax
         "support for vector macros not yet added")]
-      [(syntax-datum? syntax) syntax]
-      [(partially-expanded? syntax)
-       (match-define (partially-expanded s le) syntax)
-       (recur s le)]
       [else 
        (raise-syntax-error#
         syntax
         (format "Unrecognized syntax type for the following syntax: ~a" syntax))]))
   
-  #;(define expand-inner-syntax-orig expand-inner-syntax)
-  #;(set! expand-inner-syntax (lambda (syntax top-env local-env #:at-top-level (at-top-level #f))
-                              (define result (expand-inner-syntax-orig syntax top-env local-env #:at-top-level at-top-level))
-                              (printf "before expansion: ~a\nafter expansion: ~a\n" syntax result)
-                              result))
-  
   ;expand a top level form and return (new-top-env expand-exp)
   (define (expand-top-level-form top-env sexp)
     (define (expand-default)
-      (expand-inner-syntax sexp top-env (hasheq) #:at-top-level #t))
+      (expand-inner-syntax sexp top-env (hasheq) #t))
     (match sexp
       [(cons (? symbol? symbol) contents)
-       (define-values (denotation denotes-keyword?) (get-denotation-and-keyword-predicate symbol top-env (hasheq)))
+       (define-values (denotation den-sym) (get-denotation symbol top-env (hasheq) (void)))
+       (define denotes-keyword? (if (void? denotation) (λ (v) (eqv? v den-sym)) (λ (v) #f)))
        (cond
          [(denotes-keyword? 'define)
           (define-values (id body) (parse-define contents))
           (define new-top-env (hash-set top-env id id))
-          (values new-top-env `(define ,id ,(expand-inner-syntax body new-top-env (hasheq))))]
+          (values new-top-env `(define ,id ,(expand-inner-syntax body new-top-env (hasheq) #f)))]
          [(denotes-keyword? 'define-syntax)
           (define rest contents)
           (match contents
