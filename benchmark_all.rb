@@ -170,7 +170,9 @@ if __FILE__ == $0
   runners = [
     RacketRunner.new(File.join(prog_dir, 'racket.rkt')),
     RacketRunner.new(File.join(prog_dir, 'clinger-rees.rkt')),
+    RacketRunner.new(File.join(prog_dir, 'fie_racket.rkt')),
     PetiteRunner.new(File.join(prog_dir, 'chez.ss')),
+    PetiteRunner.new(File.join(prog_dir, 'fie_chez.ss')),
     ChickenRunner.new(File.join(prog_dir, 'chicken.ss')),
     GambitRunner.new(File.join(prog_dir, 'gambit.ss')),
     IkarusRunner.new(File.join(prog_dir, 'ikarus.ss')),

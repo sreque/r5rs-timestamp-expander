@@ -8,7 +8,6 @@
 (define-syntax ?ifpair? (syntax-rules () ((_ (a . b) kt kf) (??!apply kt #t)) ((_ not-pair kt kf) (??!apply kf #f))))
 (define-syntax ?true? (syntax-rules () ((_ x k) (??!apply k x))))
 (define-syntax ?iftrue? (syntax-rules () ((_ #f kt kf) (??!apply kf #f)) ((_ x kt kf) (??!apply kt #t))))
-(define-syntax ?append (syntax-rules () ((_ (x |...|) (y |...|) k) (??!apply k (x |...| y |...|)))))
 (define-syntax ?ifeq? (syntax-rules () ((_ (x . y) b kt kf) (??!apply kf #f)) ((_ () b kt kf) (??!apply kf #f)) ((_ a b _kt _kf) (let-syntax ((aux (syntax-rules (a) ((_ a kt kf) (??!apply kt #t)) ((_ other kt kf) (??!apply kf #f))))) (aux b _kt _kf)))))
 (define-syntax ?ifmemq? (syntax-rules () ((_ a lst kt kf) (?ifpair? lst (??!lambda (_) (?car lst (??!lambda (x) (?ifeq? a (??! x) (??!lambda (_) (??!apply kt #t)) (??!lambda (_) (?cdr lst (??!lambda (tail) (?ifmemq? a (??! tail) kt kf)))))))) (??!lambda (_) (??!apply kf #f))))))
 (define-syntax ?number-zero (syntax-rules () ((_ k) (??!apply k ()))))
