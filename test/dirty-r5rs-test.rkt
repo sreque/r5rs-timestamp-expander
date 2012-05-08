@@ -223,10 +223,11 @@
 
 
   (make-expand-test-defs)
-
+  
   (define dirty-r5rs-test
     (test-suite
      "dirty r5rs test"
+     
      (expand-and-eval program)
      
      (test-expand
@@ -255,41 +256,32 @@
                                (list (lookup a) (lookup b)))))))
       (1 2 (3 2)))
      
-     (test-expand
+     (test-expand-shape
       ((make-env1
         (lambda ((id a b c)) (id a b c))) '(1 2 3 4))
-      (1 2 3 4))
+      (list (list 'lambda (list var) var) (list 1 2 3 4)))
      
-     (test-expand (((make-env1
-                     (lambda ((id a b c)) (lambda ((id a b)) (list (id a b c) (id a b))))
-                     ) 1) 2)
-                  (1 2))
+     (test-expand-shape
+      (((make-env1
+         (lambda ((id a b c)) (lambda ((id a b)) (list (id a b c) (id a b))))) 1) 2)
+      (list (list (list 'lambda (list var1) (list 'lambda (list var2) (list var1 var2))) 1) 2))
      
-     (test-expand
+     (test-expand-shape
       (((make-env1
          (lambda ((id a b c)) (lambda ((id a b)) 
                                 (list (id a b c) (id a b) '(id a b x) '(id a b) 'x)
                                 ))) 1) 2)
-      (1 2 ("a" "b" "x") ("a" "b") x))
+      (list 
+       (list 
+        (list 'lambda (list var1)
+              (list 'lambda (list var2)
+                    (list var1 var2 (list 'map 'symbol->string (list 'a 'b 'x)) (list 'map 'symbol->string (list 'a 'b)) 'x))) 1) 2))
      
      ; (concat-ids (id a b c) (id x y z)) => (id a b c x y z)
      ; For now assume that a, b, c, x, y, z are all distinct symbols
      
-     (test-expand ((((make-env1
-                      (let-syntax
-                          ((add-c
-                            (syntax-rules ()
-                              ((_ id a b) (id a b c)))))
-                        (lambda ((id a b c))
-                          (lambda ((id a b))
-                            (lambda ((id c))
-                              (list (id a b) (id c) (add-c id a b)))))
-                        )) 1) 2) 3)
-                  (2 3 1))
-     
-     (test-expand 
-      (((
-         (make-env1
+     (test-expand-shape 
+      ((((make-env1
           (let-syntax
               ((add-c
                 (syntax-rules ()
@@ -298,7 +290,32 @@
               (lambda ((id a b))
                 (lambda ((id c))
                   (list (id a b) (id c) (add-c id a b)))))
-            ))
+            )) 1) 2) 3)
+      (list 
+       (list
+        (list
+         (list 'lambda (list var1)
+               (list 'lambda (list var2)
+                     (list 'lambda (list var3)
+                           (list var2 var3 var1)))) 1) 2) 3))
+     
+     (test-expand-shape
+      ((((make-env1
+          (let-syntax
+                ((add-c
+                  (syntax-rules ()
+                    ((_ id a b) (id a b c)))))
+              (lambda ((id a b c))
+                (lambda ((id a b))
+                  (lambda ((id c))
+                    (list (id a b) (id c) (add-c id a b)))))
+              ))
          1) 2) 3)
-      (2 3 1))
+      (list
+       (list
+        (list
+         (list 'lambda (list var1)
+               (list 'lambda (list var2)
+                     (list 'lambda (list var3)
+                           (list var2 var3 var1)))) 1) 2) 3))
      )))

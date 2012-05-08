@@ -58,7 +58,7 @@
     (match-define (cons path code) v)
     (define-values (_ cpu real gc) (benchmark 
                                     (λ () (call-with-values 
-                                           (λ () (expand-program r5rs-top-level-env code)) list)) 5))
+                                           (λ () (expand-program r5rs-top-level-env code)) list)) 1))
     (printf "~a: real=~as cpu=~as gc=~as\n" (find-relative-path benchmark-path path) (/ real 1000.0) (/ cpu 1000.0) (/ gc 1000.0))))
 
 (define (profile-main)

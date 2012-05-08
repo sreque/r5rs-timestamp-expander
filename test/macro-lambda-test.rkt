@@ -124,9 +124,9 @@
      ;===evals-to===> '(((1 2) 5 (1 2)) (3 4))
 
      ; Another test due to Al Petrofsky
-     (test-expand
+     (test-expand-shape
       (??!apply (??!lambda (x) (let (((??! x) 1)) (??! x))) foo)
-      1)
+      (list (list 'lambda (list var) var) 1))
      ;===expands-to===> ((lambda (foo) foo) 1)
      ;===evals-to===> 1
 
@@ -135,6 +135,6 @@
       (??!apply (??!lambda (x k) (??!apply (??! k) (+ 1 (??! x))))
                 4
                 (??!lambda (x) (??! x)))
-      5)
+      (+ 1 4))
      ;===evals-to===> 5`
      )))

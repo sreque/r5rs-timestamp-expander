@@ -722,7 +722,7 @@
     (test-suite
      "Schelog test"     
      (expand-and-eval program)
-     (test-expand
+     (test-expand-and-eval
       (%which (M) (%test-color 'test M))
       ((M
         ((region a red (yellow blue yellow))
@@ -731,7 +731,7 @@
          (region d yellow (red blue white))
          (region e red (yellow blue white))
          (region f white (blue yellow red))))))     
-     (test-expand
+     (test-expand-and-eval
       (%which (M) (%test-color 'western-europe M))
       ((M
         ((region portugal red (yellow))
