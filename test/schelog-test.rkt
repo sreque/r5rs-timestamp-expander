@@ -607,7 +607,7 @@
 	  (%member x zs))))))
 
 ;this is broken because ! isn't defined
-#;(define %if-then-else
+(define %if-then-else
   (lambda (p q r)
     (%cut-delimiter
       (%or
